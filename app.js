@@ -9,7 +9,7 @@ const OUR_LEAGUE_NAME = 'ליגה שנייה';
 const FINISHED = 'הסתיים';
 const CACHE_KEY = 'fl-cache-v1';
 const AUTO_REFRESH_MS = 2 * 60 * 1000;
-const APP_VERSION = 12;
+const APP_VERSION = 13;
 
 // Same queries the league site itself makes for its public pages.
 const SOURCES = {
@@ -75,7 +75,7 @@ async function refresh() {
   refreshing = true;
   document.body.classList.add('is-refreshing');
   try {
-    const [d] = await Promise.all([loadData(), loadSharedNotes().catch(() => { /* keep cached notes */ })]);
+    const [d] = await Promise.all([loadData(), loadNotes().catch(() => { /* keep cached notes */ })]);
     setData(d);
     writeCache(d);
     loadError = null;
@@ -84,8 +84,9 @@ async function refresh() {
   } finally {
     refreshing = false;
     document.body.classList.remove('is-refreshing');
-    // Re-rendering the notes page would wipe a note mid-typing; it doesn't need fresh scores anyway.
-    if (data && route().tab === 'notes') updateFooter(); else render();
+    // Don't re-render under someone typing a note (it would close the keyboard).
+    const typing = document.activeElement && document.activeElement.closest('#app form');
+    if (data && typing) updateFooter(); else render();
   }
 }
 
@@ -329,7 +330,7 @@ function viewHome() {
       html += `
         <a class="game ${res ? `game-${res}` : ''} ${next === g ? 'game-next' : ''}" href="${oppId ? `#/team/${esc(oppId)}` : '#/'}">
           <div class="game-main">
-            <div class="game-opp">${dot(opp)}<span>נגד <strong>${esc(teamName(g, os))}</strong>${oppId && noteFor(oppId) ? ' <span class="has-note" title="יש הערות">📝</span>' : ''}${playersParen(opp)}</span></div>
+            <div class="game-opp">${dot(opp)}<span>נגד <strong>${esc(teamName(g, os))}</strong>${oppId && notesFor(oppId).length ? ' <span class="has-note" title="יש הערות">📝</span>' : ''}${playersParen(opp)}</span></div>
             <div class="game-meta">${whenText(g)}${oppRec ? ` · מאזן יריבה ${oppRec.played ? `${oppRec.W}-${oppRec.L}` : '0-0'}` : ''}</div>
           </div>
           <div class="game-side">
@@ -367,12 +368,8 @@ function viewTeam(id) {
       ${played.length ? `<div class="form">${played.slice(0, 5).map(g => { const r = resultFor(g, id); return `<span class="form-${r}" title="${RESULT_LABEL[r]}">${r === 'W' ? 'נ' : r === 'L' ? 'ה' : 'ת'}</span>`; }).join('')}<small>5 אחרונים</small></div>` : ''}
     </section>`;
 
-  const note = isUs ? '' : noteFor(id);
-  if (note || (!isUs && canEdit())) {
-    html += `<section class="note-view">
-      <div class="note-view-head"><strong>📝 הערות</strong>${canEdit() ? `<a class="note-edit" href="#/notes/${esc(id)}">${note ? '✏️ עריכה' : '➕ הוספת הערה'}</a>` : ''}</div>
-      ${note ? `<div class="note-body">${esc(note)}</div>` : '<div class="muted">עדיין אין הערות על הקבוצה הזו.</div>'}
-    </section>`;
+  if (!isUs && notesEnabled()) {
+    html += `<section class="note-view"><div class="note-view-head"><strong>📝 הערות</strong></div>${notesBlock(id)}</section>`;
   }
 
   if (vsUs.length) {
@@ -505,73 +502,169 @@ function goBack() {
 window.goBack = goBack;
 
 // ---- Render / routing ---------------------------------------------------
-// ---- Notes (shared: notes.json in the GitHub repo) ----------------------
-// Everyone reads notes.json; editing needs a GitHub token (Contents: read & write on this repo)
-// that an editor pastes once and that stays on their own device.
-const REPO = 'OriAha/footvolly_league';
-const NOTES_FILE = 'notes.json';
-const NOTES_RAW = `https://raw.githubusercontent.com/${REPO}/main/${NOTES_FILE}`;
-const NOTES_API = `https://api.github.com/repos/${REPO}/contents/${NOTES_FILE}`;
-const NOTES_CACHE_KEY = 'fl-notes-shared';
+// ---- Notes (shared, anyone can add: Firebase Realtime Database) -------
+// /notes/{teamId}/{noteId} = { text, name, uid, ts }. Anyone reads; visitors get an anonymous
+// Firebase identity on their first write, and the database rules only let them edit/delete their own notes.
+const FIREBASE = {
+  apiKey: '',      // Firebase project settings → Web app → apiKey
+  databaseURL: '', // e.g. https://<project>-default-rtdb.europe-west1.firebasedatabase.app
+};
+const notesEnabled = () => !!(FIREBASE.apiKey && FIREBASE.databaseURL);
+const NOTES_CACHE_KEY = 'fl-notes-cache-v2';
+const AUTH_KEY = 'fl-auth-v1';
+const NAME_KEY = 'fl-name';
 const OLD_LOCAL_NOTES_KEY = 'fl-notes-v1';
-const TOKEN_KEY = 'fl-gh-token';
+const NOTE_MAX = 1000;
 
-let sharedNotes = (() => { try { return JSON.parse(localStorage.getItem(NOTES_CACHE_KEY)) || {}; } catch { return {}; } })();
+let allNotes = (() => { try { return JSON.parse(localStorage.getItem(NOTES_CACHE_KEY)) || {}; } catch { return {}; } })();
+const drafts = {}; // unsent text per team, survives re-renders
 
-function getToken() { try { return localStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; } }
-const canEdit = () => !!getToken();
-
-function setSharedNotes(n) {
-  sharedNotes = n && typeof n === 'object' ? n : {};
-  try { localStorage.setItem(NOTES_CACHE_KEY, JSON.stringify(sharedNotes)); } catch { /* storage unavailable */ }
+function notesFor(teamId) {
+  return Object.entries(allNotes[teamId] || {})
+    .filter(([, n]) => n && typeof n.text === 'string')
+    .map(([id, n]) => ({ id, ...n }))
+    .sort((a, b) => (a.ts || 0) - (b.ts || 0));
 }
-function noteFor(teamId) {
-  const n = sharedNotes[teamId];
-  return n && n.text ? n.text : '';
+function setAllNotes(n) {
+  allNotes = n && typeof n === 'object' ? n : {};
+  try { localStorage.setItem(NOTES_CACHE_KEY, JSON.stringify(allNotes)); } catch { /* storage unavailable */ }
 }
-
-// Editors read through the API (always current); viewers read the public raw file (can lag a few minutes).
-async function loadSharedNotes() {
-  if (canEdit()) {
-    try { return setSharedNotes((await readRemoteNotes()).notes); } catch { /* fall back to the public file */ }
-  }
-  const res = await fetch(`${NOTES_RAW}?t=${Date.now()}`, { cache: 'no-store' });
-  if (res.status === 404) return setSharedNotes({});
+async function loadNotes() {
+  if (!notesEnabled()) return;
+  const res = await fetch(`${FIREBASE.databaseURL}/notes.json`, { cache: 'no-store' });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  setSharedNotes(await res.json());
+  setAllNotes(await res.json());
 }
 
-// UTF-8 safe base64 for the GitHub contents API.
-const b64encode = str => { const bytes = new TextEncoder().encode(str); let bin = ''; bytes.forEach(b => { bin += String.fromCharCode(b); }); return btoa(bin); };
-const b64decode = b64 => new TextDecoder().decode(Uint8Array.from(atob(b64.replace(/\s/g, '')), c => c.charCodeAt(0)));
-
-function ghHeaders() {
-  return { Authorization: `Bearer ${getToken()}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' };
-}
-async function readRemoteNotes() {
-  const res = await fetch(`${NOTES_API}?ref=main&t=${Date.now()}`, { headers: ghHeaders(), cache: 'no-store' });
-  if (res.status === 404) return { notes: {}, sha: null };
-  if (res.status === 401 || res.status === 403) throw new Error('auth');
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const j = await res.json();
-  return { notes: JSON.parse(b64decode(j.content) || '{}'), sha: j.sha };
-}
-
-// Apply `changes` ({teamId: text}) on top of the latest remote file and commit it. Retries on a write race.
-async function writeNotes(changes, message) {
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const { notes, sha } = await readRemoteNotes();
-    for (const [id, text] of Object.entries(changes)) {
-      if (text.trim()) notes[id] = { text, updated: Date.now() }; else delete notes[id];
+// Anonymous Firebase identity for this device (created on first write, refreshed when it expires).
+function readAuth() { try { return JSON.parse(localStorage.getItem(AUTH_KEY)); } catch { return null; } }
+function writeAuth(a) { try { localStorage.setItem(AUTH_KEY, JSON.stringify(a)); } catch { /* storage unavailable */ } }
+const myUid = () => (readAuth() || {}).uid || null;
+async function getIdToken() {
+  let a = readAuth();
+  if (a && a.idToken && a.expiresAt > Date.now() + 60000) return a;
+  let res, j;
+  if (a && a.refreshToken) {
+    res = await fetch(`https://securetoken.googleapis.com/v1/token?key=${FIREBASE.apiKey}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `grant_type=refresh_token&refresh_token=${encodeURIComponent(a.refreshToken)}`,
+    });
+    if (res.ok) {
+      j = await res.json();
+      a = { uid: j.user_id, idToken: j.id_token, refreshToken: j.refresh_token, expiresAt: Date.now() + Number(j.expires_in) * 1000 };
+      writeAuth(a);
+      return a;
     }
-    const body = { message, content: b64encode(JSON.stringify(notes, null, 2) + '\n'), branch: 'main' };
-    if (sha) body.sha = sha;
-    const res = await fetch(NOTES_API, { method: 'PUT', headers: { ...ghHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    if (res.ok) { setSharedNotes(notes); return; }
-    if (res.status === 401 || res.status === 403) throw new Error('auth');
-    if (res.status !== 409 && res.status !== 422) throw new Error(`HTTP ${res.status}`);
   }
-  throw new Error('conflict');
+  res = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${FIREBASE.apiKey}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ returnSecureToken: true }),
+  });
+  if (!res.ok) throw new Error('auth');
+  j = await res.json();
+  a = { uid: j.localId, idToken: j.idToken, refreshToken: j.refreshToken, expiresAt: Date.now() + Number(j.expiresIn) * 1000 };
+  writeAuth(a);
+  return a;
+}
+
+async function putNote(teamId, noteId, note) {
+  const a = await getIdToken();
+  const url = `${FIREBASE.databaseURL}/notes/${teamId}/${noteId}.json?auth=${encodeURIComponent(a.idToken)}`;
+  const res = note
+    ? await fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...note, uid: a.uid }) })
+    : await fetch(url, { method: 'DELETE' });
+  if (!res.ok) throw new Error(res.status === 401 || res.status === 403 ? 'denied' : `HTTP ${res.status}`);
+  const team = { ...(allNotes[teamId] || {}) };
+  if (note) team[noteId] = { ...note, uid: a.uid }; else delete team[noteId];
+  setAllNotes({ ...allNotes, [teamId]: team });
+}
+const newNoteId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+function myName() { try { return localStorage.getItem(NAME_KEY) || ''; } catch { return ''; } }
+
+const AGO = new Intl.RelativeTimeFormat('he', { numeric: 'auto' });
+function ago(ts) {
+  const m = Math.round((ts - Date.now()) / 60000);
+  if (m > -60) return AGO.format(m, 'minute');
+  const h = Math.round(m / 60);
+  if (h > -24) return AGO.format(h, 'hour');
+  const d = Math.round(h / 24);
+  if (d > -7) return AGO.format(d, 'day');
+  const dt = new Date(ts);
+  return `${dt.getDate()}.${dt.getMonth() + 1}.${String(dt.getFullYear()).slice(2)}`;
+}
+
+// Notes list + add form for one team. Used on the team page and in the notes tab.
+function notesBlock(teamId) {
+  if (!notesEnabled()) return `<div class="muted">ההערות המשותפות עדיין לא הופעלו.</div>`;
+  const list = notesFor(teamId), uid = myUid();
+  return `<div class="notes-list">${list.length ? list.map(n => `
+      <div class="note-item" data-note="${esc(n.id)}">
+        <div class="note-item-head"><strong>${esc(n.name || 'אנונימי')}</strong><span>${n.ts ? esc(ago(n.ts)) : ''}</span>
+          ${uid && n.uid === uid ? `<span class="note-actions"><button onclick="editNote('${esc(teamId)}','${esc(n.id)}')">עריכה</button><button onclick="deleteNote('${esc(teamId)}','${esc(n.id)}')">מחיקה</button></span>` : ''}</div>
+        <div class="note-body">${esc(n.text)}</div>
+      </div>`).join('') : '<div class="muted">עדיין אין הערות על הקבוצה הזו.</div>'}</div>
+    <form class="note-form" data-team="${esc(teamId)}" onsubmit="addNote(event)">
+      <textarea class="note-text" name="text" rows="2" maxlength="${NOTE_MAX}" placeholder="הוסיפו הערה: מי חזק בהגשה, איך הם מגנים, למה לשים לב…">${esc(drafts[teamId] || '')}</textarea>
+      <div class="note-form-row">
+        <input class="note-name" name="name" maxlength="40" placeholder="השם שלכם" value="${esc(myName())}" />
+        <button class="btn" type="submit">הוספה</button>
+      </div>
+      <div class="note-status"></div>
+    </form>`;
+}
+
+async function addNote(e) {
+  e.preventDefault();
+  const form = e.target, teamId = form.dataset.team;
+  const text = form.text.value.trim(), name = form.name.value.trim();
+  const st = form.querySelector('.note-status');
+  if (!text) { st.textContent = 'כתבו משהו קודם'; return; }
+  try { localStorage.setItem(NAME_KEY, name); } catch { /* storage unavailable */ }
+  form.querySelector('button').disabled = true;
+  st.textContent = 'שומר…';
+  try {
+    await putNote(teamId, newNoteId(), { text: text.slice(0, NOTE_MAX), name: name.slice(0, 40), ts: Date.now() });
+    delete drafts[teamId];
+    rerenderKeepingScroll();
+  } catch (err) {
+    form.querySelector('button').disabled = false;
+    st.textContent = err.message === 'denied' ? 'השמירה נחסמה' : 'השמירה נכשלה – בדקו את החיבור ונסו שוב';
+  }
+}
+async function editNote(teamId, noteId) {
+  const n = (allNotes[teamId] || {})[noteId];
+  if (!n) return;
+  const text = prompt('עריכת ההערה:', n.text);
+  if (text === null) return;
+  try {
+    if (!text.trim()) await putNote(teamId, noteId, null);
+    else await putNote(teamId, noteId, { text: text.trim().slice(0, NOTE_MAX), name: n.name || '', ts: n.ts || Date.now() });
+    rerenderKeepingScroll();
+  } catch { alert('השמירה נכשלה'); }
+}
+async function deleteNote(teamId, noteId) {
+  if (!confirm('למחוק את ההערה?')) return;
+  try { await putNote(teamId, noteId, null); rerenderKeepingScroll(); } catch { alert('המחיקה נכשלה'); }
+}
+window.addNote = addNote;
+window.editNote = editNote;
+window.deleteNote = deleteNote;
+function rerenderKeepingScroll() { const y = window.scrollY; render(); window.scrollTo(0, y); }
+
+document.addEventListener('input', e => {
+  const form = e.target.closest && e.target.closest('form.note-form');
+  if (form && e.target.name === 'text') drafts[form.dataset.team] = e.target.value;
+});
+
+// Notes written before sharing existed lived only on this device: post them once as this visitor's notes.
+async function migrateLocalNotes() {
+  if (!notesEnabled()) return;
+  let old = null;
+  try { old = JSON.parse(localStorage.getItem(OLD_LOCAL_NOTES_KEY)); } catch { /* ignore */ }
+  if (!old) return;
+  for (const [teamId, n] of Object.entries(old)) {
+    if (n && n.text && n.text.trim()) await putNote(teamId, newNoteId(), { text: n.text.trim().slice(0, NOTE_MAX), name: myName(), ts: n.updated || Date.now() });
+  }
+  try { localStorage.removeItem(OLD_LOCAL_NOTES_KEY); } catch { /* ignore */ }
 }
 
 // Our league's other teams, ordered by when we next meet them.
@@ -591,96 +684,19 @@ function notesTeams() {
 
 function viewNotes() {
   const items = notesTeams();
-  const edit = canEdit();
   let html = `<h1 class="page-title">הערות על היריבות</h1>
-    <p class="page-sub">ההערות גלויות לכל מי שנכנס לאתר, ומופיעות גם בעמוד של כל קבוצה.${edit ? ' שינויים נשמרים אוטומטית לכולם.' : ''}</p>`;
+    <p class="page-sub">כל מי שנכנס לאתר יכול לקרוא ולהוסיף הערות. כל אחד יכול לערוך ולמחוק רק את ההערות שהוא כתב.</p>`;
   if (!items.length) return html + `<div class="empty">אין קבוצות להצגה.</div>`;
   for (const { team, next } of items) {
-    const note = noteFor(team.id);
-    if (!edit && !note) continue;
+    const count = notesFor(team.id).length;
     html += `<div class="note-card" id="note-${esc(team.id)}">
-      <div class="note-head">${dot(team)}<a class="team-link" href="#/team/${esc(team.id)}">${esc(team.name)}</a>${playersParen(team)}</div>
+      <div class="note-head">${dot(team)}<a class="team-link" href="#/team/${esc(team.id)}">${esc(team.name)}</a>${playersParen(team)}${count ? `<span class="note-count">${count}</span>` : ''}</div>
       <div class="note-meta">${next ? `המשחק הבא מולם: ${fmtDate(next.date)}${next.time ? ` · ${esc(next.time)}` : ''}` : 'אין משחק קרוב מולם'}</div>
-      ${edit
-        ? `<textarea class="note-text" data-team="${esc(team.id)}" rows="3" placeholder="למשל: מי חזק בהגשה, איך הם מגנים, למה לשים לב…">${esc(note)}</textarea>
-           <div class="note-status" data-status="${esc(team.id)}"></div>`
-        : `<div class="note-body">${esc(note)}</div>`}
+      ${notesBlock(team.id)}
     </div>`;
   }
-  if (!edit && !items.some(i => noteFor(i.team.id))) html += `<div class="empty">עדיין אין הערות.</div>`;
-  html += `<div class="note-backup">${edit
-    ? `<span class="muted">✏️ מצב עריכה פעיל במכשיר הזה</span><button class="btn btn-ghost" onclick="logoutEditor()">יציאה ממצב עריכה</button>`
-    : `<button class="btn btn-ghost" onclick="loginEditor()">🔑 כניסה לעריכה</button><small>עריכה דורשת מפתח עריכה (GitHub token) של מנהל האתר.</small>`}</div>`;
   return html;
 }
-
-async function loginEditor() {
-  const t = (prompt('הדביקו את מפתח העריכה (GitHub token):') || '').trim();
-  if (!t) return;
-  try { localStorage.setItem(TOKEN_KEY, t); } catch { alert('לא ניתן לשמור במכשיר הזה'); return; }
-  try {
-    await readRemoteNotes();
-    await migrateLocalNotes();
-    render();
-  } catch (e) {
-    try { localStorage.removeItem(TOKEN_KEY); } catch { /* storage unavailable */ }
-    alert(e.message === 'auth' ? 'המפתח לא תקין או שאין לו הרשאת עריכה לריפו' : 'לא הצלחנו להתחבר ל-GitHub, נסו שוב');
-  }
-}
-function logoutEditor() {
-  try { localStorage.removeItem(TOKEN_KEY); } catch { /* storage unavailable */ }
-  render();
-}
-window.loginEditor = loginEditor;
-window.logoutEditor = logoutEditor;
-
-// Notes written before sharing existed lived only on this device: upload any the shared file lacks.
-async function migrateLocalNotes() {
-  let old = null;
-  try { old = JSON.parse(localStorage.getItem(OLD_LOCAL_NOTES_KEY)); } catch { /* ignore */ }
-  if (!old) return;
-  const { notes } = await readRemoteNotes();
-  const changes = {};
-  for (const [id, n] of Object.entries(old)) if (n && n.text && !(notes[id] && notes[id].text)) changes[id] = n.text;
-  if (Object.keys(changes).length) await writeNotes(changes, 'notes: upload notes saved on device');
-  try { localStorage.removeItem(OLD_LOCAL_NOTES_KEY); } catch { /* ignore */ }
-}
-
-const noteTimers = {};
-const pendingNotes = {};
-function setNoteStatus(id, text) {
-  const st = document.querySelector(`[data-status="${CSS.escape(id)}"]`);
-  if (st) st.textContent = text;
-}
-async function flushNote(id) {
-  clearTimeout(noteTimers[id]);
-  if (!(id in pendingNotes)) return;
-  const text = pendingNotes[id];
-  delete pendingNotes[id];
-  setNoteStatus(id, 'שומר…');
-  const name = (teamById(id) || {}).name || id;
-  try {
-    await writeNotes({ [id]: text }, `notes: ${name}`);
-    setNoteStatus(id, id in pendingNotes ? 'שומר…' : 'נשמר לכולם ✓');
-  } catch (e) {
-    pendingNotes[id] ??= text; // keep it so the next edit or blur retries
-    setNoteStatus(id, e.message === 'auth' ? 'אין הרשאה לשמור – בדקו את מפתח העריכה' : 'השמירה נכשלה – ננסה שוב בעריכה הבאה');
-  }
-}
-document.addEventListener('input', e => {
-  const ta = e.target.closest && e.target.closest('textarea.note-text');
-  if (!ta) return;
-  const id = ta.dataset.team;
-  pendingNotes[id] = ta.value;
-  setNoteStatus(id, 'ממתין לשמירה…');
-  clearTimeout(noteTimers[id]);
-  noteTimers[id] = setTimeout(() => flushNote(id), 1500);
-});
-document.addEventListener('focusout', e => {
-  const ta = e.target.closest && e.target.closest('textarea.note-text');
-  if (ta) flushNote(ta.dataset.team);
-});
-window.addEventListener('pagehide', () => Object.keys(pendingNotes).forEach(flushNote));
 
 const TABS = [
   { id: 'home', href: '#/', label: 'בית', icon: '🏠' },
@@ -816,6 +832,7 @@ document.addEventListener('visibilitychange', () => {
 });
 setInterval(() => { if (document.visibilityState === 'visible') refresh(); }, AUTO_REFRESH_MS);
 
+migrateLocalNotes().catch(() => { /* try again next visit */ });
 const cached = readCache();
 if (cached && cached.games) { setData(cached); render(); }
 refresh();
