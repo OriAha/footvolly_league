@@ -506,8 +506,9 @@ window.goBack = goBack;
 // /notes/{teamId}/{noteId} = { text, name, uid, ts }. Anyone reads; visitors get an anonymous
 // Firebase identity on their first write, and the database rules only let them edit/delete their own notes.
 const FIREBASE = {
-  apiKey: '',      // Firebase project settings → Web app → apiKey
-  databaseURL: '', // e.g. https://<project>-default-rtdb.europe-west1.firebasedatabase.app
+  // Public web config (not a secret); access is enforced by firebase-rules.json.
+  apiKey: 'AIzaSyDdcOE-Mu9OrW6fFUgPO5t3mg_T7ZmWbW0',
+  databaseURL: 'https://footvolly-ori-kamar-default-rtdb.europe-west1.firebasedatabase.app',
 };
 const notesEnabled = () => !!(FIREBASE.apiKey && FIREBASE.databaseURL);
 const NOTES_CACHE_KEY = 'fl-notes-cache-v2';
