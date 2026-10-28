@@ -9,7 +9,7 @@ const OUR_LEAGUE_NAME = 'ליגה שנייה';
 const FINISHED = 'הסתיים';
 const CACHE_KEY = 'fl-cache-v1';
 const AUTO_REFRESH_MS = 2 * 60 * 1000;
-const APP_VERSION = 10;
+const APP_VERSION = 11;
 
 // Same queries the league site itself makes for its public pages.
 const SOURCES = {
@@ -84,7 +84,8 @@ async function refresh() {
   } finally {
     refreshing = false;
     document.body.classList.remove('is-refreshing');
-    render();
+    // Re-rendering the notes page would wipe a note mid-typing; it doesn't need fresh scores anyway.
+    if (data && route().tab === 'notes') updateFooter(); else render();
   }
 }
 
@@ -328,7 +329,7 @@ function viewHome() {
       html += `
         <a class="game ${res ? `game-${res}` : ''} ${next === g ? 'game-next' : ''}" href="${oppId ? `#/team/${esc(oppId)}` : '#/'}">
           <div class="game-main">
-            <div class="game-opp">${dot(opp)}<span>נגד <strong>${esc(teamName(g, os))}</strong>${playersParen(opp)}</span></div>
+            <div class="game-opp">${dot(opp)}<span>נגד <strong>${esc(teamName(g, os))}</strong>${oppId && noteFor(oppId) ? ' <span class="has-note" title="יש הערות">📝</span>' : ''}${playersParen(opp)}</span></div>
             <div class="game-meta">${whenText(g)}${oppRec ? ` · מאזן יריבה ${oppRec.played ? `${oppRec.W}-${oppRec.L}` : '0-0'}` : ''}</div>
           </div>
           <div class="game-side">
@@ -365,6 +366,14 @@ function viewTeam(id) {
       </div>
       ${played.length ? `<div class="form">${played.slice(0, 5).map(g => { const r = resultFor(g, id); return `<span class="form-${r}" title="${RESULT_LABEL[r]}">${r === 'W' ? 'נ' : r === 'L' ? 'ה' : 'ת'}</span>`; }).join('')}<small>5 אחרונים</small></div>` : ''}
     </section>`;
+
+  if (!isUs) {
+    const note = noteFor(id);
+    html += `<section class="note-view">
+      <div class="note-view-head"><strong>📝 ההערות שלי</strong><a class="note-edit" href="#/notes/${esc(id)}">${note ? '✏️ עריכה' : '➕ הוספת הערה'}</a></div>
+      ${note ? `<div class="note-body">${esc(note)}</div>` : '<div class="muted">עדיין אין הערות על הקבוצה הזו.</div>'}
+    </section>`;
+  }
 
   if (vsUs.length) {
     html += `<h2 class="section-title">המשחקים שלנו מולם</h2><div class="round">`;
@@ -496,11 +505,106 @@ function goBack() {
 window.goBack = goBack;
 
 // ---- Render / routing ---------------------------------------------------
+// ---- Notes (saved on this device only) ---------------------------------
+const NOTES_KEY = 'fl-notes-v1';
+function readNotes() {
+  try { return JSON.parse(localStorage.getItem(NOTES_KEY)) || {}; } catch { return {}; }
+}
+function noteFor(teamId) {
+  const n = readNotes()[teamId];
+  return n && n.text ? n.text : '';
+}
+function saveNote(teamId, text) {
+  const all = readNotes();
+  if (text.trim()) all[teamId] = { text, updated: Date.now() }; else delete all[teamId];
+  try { localStorage.setItem(NOTES_KEY, JSON.stringify(all)); return true; } catch { return false; }
+}
+
+// Our league's other teams, ordered by when we next meet them.
+function notesTeams() {
+  if (!ourTeam) return [];
+  const nextVs = {};
+  for (const g of gamesOf(ourTeam.id)) {
+    const opp = teamIdOf(g, other(sideOf(g, ourTeam.id)));
+    if (opp && !isFinished(g) && !nextVs[opp]) nextVs[opp] = g;
+  }
+  return data.teams
+    .filter(t => t.league_id === ourTeam.league_id && t.id !== ourTeam.id && isApproved(t))
+    .map(t => ({ team: t, next: nextVs[t.id] || null }))
+    .sort((a, b) => (a.next ? 0 : 1) - (b.next ? 0 : 1) || (a.next && b.next ? gameSort(a.next, b.next) : 0)
+      || a.team.name.localeCompare(b.team.name, 'he'));
+}
+
+function viewNotes() {
+  const items = notesTeams();
+  let html = `<h1 class="page-title">הערות על היריבות</h1>
+    <p class="page-sub">ההערות מופיעות בעמוד של כל קבוצה כשנכנסים אליה מלוח המשחקים. הן נשמרות אוטומטית, רק במכשיר הזה.</p>`;
+  if (!items.length) return html + `<div class="empty">אין קבוצות להצגה.</div>`;
+  for (const { team, next } of items) {
+    html += `<div class="note-card" id="note-${esc(team.id)}">
+      <div class="note-head">${dot(team)}<a class="team-link" href="#/team/${esc(team.id)}">${esc(team.name)}</a>${playersParen(team)}</div>
+      <div class="note-meta">${next ? `המשחק הבא מולם: ${fmtDate(next.date)}${next.time ? ` · ${esc(next.time)}` : ''}` : 'אין משחק קרוב מולם'}</div>
+      <textarea class="note-text" data-team="${esc(team.id)}" rows="3" placeholder="למשל: מי חזק בהגשה, איך הם מגנים, למה לשים לב…">${esc(noteFor(team.id))}</textarea>
+      <div class="note-status" data-status="${esc(team.id)}"></div>
+    </div>`;
+  }
+  html += `<div class="note-backup">
+      <button class="btn btn-ghost" onclick="exportNotes()">📤 שמירת גיבוי</button>
+      <label class="btn btn-ghost">📥 שחזור מגיבוי<input type="file" accept=".json,application/json" onchange="importNotes(this)" hidden></label>
+      <small>באייפון, נתונים של אתר שלא נכנסים אליו 7 ימים עלולים להימחק. פתיחה מהאייקון במסך הבית מונעת את זה, ושווה לשמור גיבוי מדי פעם.</small>
+    </div>`;
+  return html;
+}
+
+const noteTimers = {};
+document.addEventListener('input', e => {
+  const ta = e.target.closest && e.target.closest('textarea.note-text');
+  if (!ta) return;
+  const id = ta.dataset.team, st = document.querySelector(`[data-status="${CSS.escape(id)}"]`);
+  if (st) st.textContent = 'שומר…';
+  clearTimeout(noteTimers[id]);
+  noteTimers[id] = setTimeout(() => {
+    const ok = saveNote(id, ta.value);
+    if (st) st.textContent = ok ? 'נשמר ✓' : 'לא ניתן לשמור במכשיר הזה';
+  }, 400);
+});
+document.addEventListener('focusout', e => {
+  const ta = e.target.closest && e.target.closest('textarea.note-text');
+  if (ta) { clearTimeout(noteTimers[ta.dataset.team]); saveNote(ta.dataset.team, ta.value); }
+});
+
+function exportNotes() {
+  const blob = new Blob([JSON.stringify(readNotes(), null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `houthis-notes-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+function importNotes(input) {
+  const f = input.files && input.files[0];
+  if (!f) return;
+  f.text().then(txt => {
+    const incoming = JSON.parse(txt);
+    if (!incoming || typeof incoming !== 'object') throw new Error('bad file');
+    const all = readNotes();
+    for (const [id, n] of Object.entries(incoming)) {
+      if (n && typeof n.text === 'string' && n.text.trim() && (!all[id] || (n.updated || 0) >= (all[id].updated || 0))) all[id] = n;
+    }
+    localStorage.setItem(NOTES_KEY, JSON.stringify(all));
+    alert('ההערות שוחזרו');
+    render();
+  }).catch(() => alert('הקובץ לא תקין'));
+}
+window.exportNotes = exportNotes;
+window.importNotes = importNotes;
+
 const TABS = [
   { id: 'home', href: '#/', label: 'בית', icon: '🏠' },
   { id: 'standings', href: '#/standings', label: 'טבלאות', icon: '🏆' },
   { id: 'schedule', href: '#/schedule', label: 'לוח משחקים', icon: '📅' },
   { id: 'teams', href: '#/teams', label: 'קבוצות', icon: '👥' },
+  { id: 'notes', href: '#/notes', label: 'הערות', icon: '📝' },
 ];
 
 function route() {
@@ -510,6 +614,7 @@ function route() {
   if (h.startsWith('#/standings')) return { tab: 'standings', html: viewStandings };
   if ((m = h.match(/^#\/schedule(?:\/([\w]+))?/))) return { tab: 'schedule', html: () => viewSchedule(m[1]) };
   if (h.startsWith('#/teams')) return { tab: 'teams', html: viewTeams };
+  if (h.startsWith('#/notes')) return { tab: 'notes', html: viewNotes };
   return { tab: 'home', html: viewHome };
 }
 
@@ -562,8 +667,12 @@ function render() {
   document.getElementById('head-back').hidden = r.tab !== null;
   app.innerHTML = (loadError ? `<div class="warn">מוצגים נתונים שמורים – אין חיבור לאתר הליגה כרגע.</div>` : '')
     + r.html();
-  const upd = document.getElementById('updated');
-  upd.textContent = `גרסה ${APP_VERSION} · עודכן ${new Date(data.fetchedAt).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}`;
+  updateFooter();
+}
+
+function updateFooter() {
+  document.getElementById('updated').textContent =
+    `גרסה ${APP_VERSION} · עודכן ${new Date(data.fetchedAt).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}`;
 }
 
 // Navigation. In-app links switch pages with pushState instead of letting the browser follow the
@@ -588,7 +697,13 @@ function showPage(restore) {
   shownHash = h;
   setMenu(false);
   render();
-  scrollToY(restore ? scrollPos[h] || 0 : 0);
+  const m = h.match(/^#\/notes\/([\w-]+)/), card = m && document.getElementById('note-' + m[1]);
+  if (card) {
+    scrollToY(Math.max(0, card.getBoundingClientRect().top + window.scrollY - document.querySelector('.topbar').offsetHeight - 12));
+    const ta = card.querySelector('textarea');
+    ta.focus({ preventScroll: true });
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+  } else scrollToY(restore ? scrollPos[h] || 0 : 0);
 }
 function navigate(href) {
   try { sessionStorage.setItem('fl-nav', '1'); } catch { /* storage unavailable */ }
