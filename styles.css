@@ -176,26 +176,33 @@ a.game:active { background: var(--bg); }
   color: var(--muted); font-size: 12px; padding: 12px 16px calc(16px + env(safe-area-inset-bottom));
 }
 
-/* Side tab rail (right side, below the header) */
-:root { --rail: 72px; --topbar: calc(60px + env(safe-area-inset-top)); }
-body { padding-right: calc(var(--rail) + env(safe-area-inset-right)); }
-.topbar { margin-right: calc(-1 * (var(--rail) + env(safe-area-inset-right))); }
-.tabbar {
-  position: fixed; top: var(--topbar); bottom: 0; right: 0; z-index: 20;
-  width: calc(var(--rail) + env(safe-area-inset-right));
-  display: flex; flex-direction: column; gap: 4px;
-  padding: 8px env(safe-area-inset-right) env(safe-area-inset-bottom) 0;
-  background: var(--card); border-left: 1px solid var(--line);
-  box-shadow: -4px 0 16px rgba(0,0,0,.05);
+/* Slide-out menu (opens from the right) */
+.head-start { display: flex; align-items: center; gap: 10px; }
+.menu-btn { font-size: 22px; }
+.scrim {
+  position: fixed; inset: 0; z-index: 30; background: rgba(0,0,0,.45);
+  opacity: 0; pointer-events: none; transition: opacity .2s;
 }
+.tabbar {
+  position: fixed; top: 0; bottom: 0; right: 0; z-index: 40;
+  width: min(270px, 80vw);
+  display: flex; flex-direction: column; gap: 4px;
+  padding: calc(14px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) calc(14px + env(safe-area-inset-bottom)) 12px;
+  background: var(--card); box-shadow: -8px 0 24px rgba(0,0,0,.2);
+  transform: translateX(105%); transition: transform .22s ease; visibility: hidden;
+}
+.menu-open .tabbar { transform: none; visibility: visible; }
+.menu-open .scrim { opacity: 1; pointer-events: auto; }
+.menu-open { overflow: hidden; }
+.menu-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 6px 12px; border-bottom: 1px solid var(--line); margin-bottom: 6px; }
+.menu-head strong { font-size: 18px; font-weight: 800; }
+.menu-close { background: var(--bg); color: var(--text); }
 .tabbar a {
-  display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center;
-  margin: 0 6px; padding: 10px 2px; border-radius: 12px;
-  font-size: 11px; font-weight: 500; line-height: 1.2; color: var(--muted);
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 12px; border-radius: 12px; font-size: 16px; font-weight: 500; color: var(--text);
 }
 .tabbar a.on { color: var(--accent); font-weight: 800; background: color-mix(in srgb, var(--accent) 12%, transparent); }
-.tab-icon { font-size: 20px; filter: grayscale(1); opacity: .7; }
-.tabbar a.on .tab-icon { filter: none; opacity: 1; }
+.tab-icon { font-size: 20px; width: 26px; text-align: center; }
 
 .page-title { font-size: 24px; font-weight: 800; margin: 2px 4px 12px; }
 
