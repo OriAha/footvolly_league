@@ -15,7 +15,10 @@ const SOURCES = {
   games: 'Game?sort=-updated_date&limit=500',
   teams: 'Team?sort=-updated_date&limit=300',
   leagues: 'League?sort=order&limit=20',
+  settings: 'Settings?sort=-updated_date&limit=5',
 };
+const LEAGUE_KEY = 'fl-league';
+const SITE = 'https://octopus-league-hub.base44.app';
 
 // ---- State --------------------------------------------------------------
 let data = null; // { games, teams, leagues, fetchedAt }
@@ -36,11 +39,19 @@ function slimTeam(t) {
     logo_url: t.logo_url || null, approval_status: t.approval_status };
 }
 
+// Only the scoring rules; the settings record also holds payment/registration data.
+function slimSettings(s) {
+  s = s || {};
+  return { season_name: s.season_name || '', win_points: s.win_points ?? 2, loss_points: s.loss_points ?? 1,
+    tiebreakers: s.tiebreakers || 'הפרש נקודות, מפגש ישיר' };
+}
+
 async function loadData() {
-  const [games, teams, leagues] = await Promise.all([
+  const [games, teams, leagues, settings] = await Promise.all([
     fetchEntity(SOURCES.games), fetchEntity(SOURCES.teams), fetchEntity(SOURCES.leagues),
+    fetchEntity(SOURCES.settings),
   ]);
-  return { games, teams: teams.map(slimTeam), leagues, fetchedAt: Date.now() };
+  return { games, teams: teams.map(slimTeam), leagues, settings: slimSettings(settings[0]), fetchedAt: Date.now() };
 }
 
 function readCache() {
@@ -133,6 +144,62 @@ function recordOf(teamId) {
 }
 
 const teamById = id => data.teams.find(t => t.id === id) || null;
+const isApproved = t => t.approval_status === 'אושרה';
+
+// Mirrors the league site's standings: regular-season finished games only,
+// sorted by league points then points difference, 2-way ties by head-to-head.
+function standings(leagueId) {
+  const { win_points: wp, loss_points: lp } = data.settings || slimSettings();
+  const rows = data.teams.filter(t => t.league_id === leagueId && isApproved(t)).map(t => ({
+    team: t, played: 0, wins: 0, losses: 0, pf: 0, pa: 0, diff: 0, pts: 0, tied: false,
+  }));
+  const byId = Object.fromEntries(rows.map(r => [r.team.id, r]));
+  const h2h = {};
+  for (const g of data.games) {
+    if (!isFinished(g) || g.is_final_four || (g.game_type && g.game_type !== 'regular')) continue;
+    const A = byId[g.team_a_id], B = byId[g.team_b_id];
+    if (!A || !B) continue;
+    const a = Number(g.score_a) || 0, b = Number(g.score_b) || 0;
+    A.played++; B.played++; A.pf += a; A.pa += b; B.pf += b; B.pa += a;
+    let w = null;
+    if (g.winner_team_id && (g.winner_team_id === g.team_a_id || g.winner_team_id === g.team_b_id)) w = g.winner_team_id;
+    else if (a > b) w = g.team_a_id;
+    else if (b > a) w = g.team_b_id;
+    if (!w) continue;
+    const l = w === g.team_a_id ? g.team_b_id : g.team_a_id;
+    byId[w].wins++; byId[w].pts += wp; byId[l].losses++; byId[l].pts += lp;
+    (h2h[w] ||= {})[l] = (h2h[w][l] || 0) + 1;
+  }
+  rows.forEach(r => { r.diff = r.pf - r.pa; });
+  rows.sort((x, y) => y.pts - x.pts || y.diff - x.diff || x.team.name.localeCompare(y.team.name, 'he'));
+  const out = [];
+  for (let i = 0; i < rows.length;) {
+    let j = i;
+    while (j < rows.length && rows[j].pts === rows[i].pts && rows[j].diff === rows[i].diff) j++;
+    const grp = rows.slice(i, j);
+    if (grp.length === 2) {
+      const [x, y] = grp, xy = h2h[x.team.id]?.[y.team.id] || 0, yx = h2h[y.team.id]?.[x.team.id] || 0;
+      if (yx > xy) grp.reverse(); else if (xy === yx) grp.forEach(r => { r.tied = true; });
+    } else if (grp.length > 2) grp.forEach(r => { r.tied = true; });
+    out.push(...grp);
+    i = j;
+  }
+  out.forEach((r, i) => { r.rank = i + 1; });
+  return out;
+}
+
+// Selected league for the league-wide tabs (defaults to ours).
+function currentLeagueId() {
+  let id = null;
+  try { id = localStorage.getItem(LEAGUE_KEY); } catch { /* storage unavailable */ }
+  if (id && data.leagues.some(l => l.id === id)) return id;
+  return (ourTeam && ourTeam.league_id) || (data.leagues.find(l => l.name === OUR_LEAGUE_NAME) || data.leagues[0] || {}).id;
+}
+function setLeague(id) {
+  try { localStorage.setItem(LEAGUE_KEY, id); } catch { /* storage unavailable */ }
+  render();
+}
+window.setLeague = setLeague;
 
 // ---- Formatting ---------------------------------------------------------
 const WEEKDAY = new Intl.DateTimeFormat('he-IL', { weekday: 'long' });
@@ -175,6 +242,9 @@ function recordText(r) {
   if (!r.played) return 'טרם שיחקו';
   return `${r.W} נצ׳ · ${r.L} הפ׳${r.T ? ` · ${r.T} תיקו` : ''}`;
 }
+function playersParen(team) {
+  return team && team.players.length ? ` <span class="players-paren">(${team.players.map(esc).join(', ')})</span>` : '';
+}
 function teamLink(id, name) {
   return id ? `<a class="team-link" href="#/team/${esc(id)}">${esc(name)}</a>` : `<span>${esc(name)}</span>`;
 }
@@ -211,6 +281,7 @@ function viewHome() {
       <a class="next-card" href="${oppId ? `#/team/${esc(oppId)}` : '#/'}">
         <div class="next-label">המשחק הבא · ${relDay(daysUntil(next.date)) || fmtDate(next.date)}</div>
         <div class="next-vs">נגד ${dot(opp)} <strong>${esc(teamName(next, os))}</strong></div>
+        ${opp && opp.players.length ? `<div class="next-players">(${opp.players.map(esc).join(', ')})</div>` : ''}
         <div class="next-meta">מחזור ${next.round_number ?? '—'} · ${fmtDate(next.date)} · ${whenText(next)}</div>
         ${opp ? `<div class="next-meta">מאזן היריבה: ${recordText(recordOf(opp.id))}</div>` : ''}
         <div class="next-cta">לחצו לפרטי היריבה ←</div>
@@ -241,7 +312,7 @@ function viewHome() {
       html += `
         <a class="game ${res ? `game-${res}` : ''} ${next === g ? 'game-next' : ''}" href="${oppId ? `#/team/${esc(oppId)}` : '#/'}">
           <div class="game-main">
-            <div class="game-opp">${dot(opp)}<span>נגד <strong>${esc(teamName(g, os))}</strong></span></div>
+            <div class="game-opp">${dot(opp)}<span>נגד <strong>${esc(teamName(g, os))}</strong>${playersParen(opp)}</span></div>
             <div class="game-meta">${whenText(g)}${oppRec ? ` · מאזן יריבה ${oppRec.played ? `${oppRec.W}-${oppRec.L}` : '0-0'}` : ''}</div>
           </div>
           <div class="game-side">
@@ -265,7 +336,7 @@ function viewTeam(id) {
   const vsUs = ourTeam && !isUs ? games.filter(g => sideOf(g, ourTeam.id)) : [];
 
   let html = `
-    <a class="back" href="#/">→ חזרה ללוח שלנו</a>
+    <button class="back" onclick="goBack()">→ חזרה</button>
     <section class="hero">
       <div class="hero-team">${dot(team)}<h1>${esc(team.name)}</h1></div>
       <div class="sub">${esc(team.league_name || '')}</div>
@@ -319,7 +390,119 @@ function gameRow(g, teamId, ours = false) {
     </div>`;
 }
 
+function leaguePicker(selected) {
+  return `<div class="seg" role="tablist">${data.leagues.map(l =>
+    `<button role="tab" class="${l.id === selected ? 'on' : ''}" onclick="setLeague('${esc(l.id)}')">${esc(l.name)}</button>`).join('')}</div>`;
+}
+
+function viewStandings() {
+  const lid = currentLeagueId();
+  const rows = standings(lid);
+  const st = data.settings || slimSettings();
+  let html = `<h1 class="page-title">טבלאות</h1>${leaguePicker(lid)}`;
+  if (!rows.length) return html + `<div class="empty">אין קבוצות בליגה הזו.</div>`;
+  html += `<div class="table-card"><table class="standings">
+    <thead><tr><th>#</th><th class="t-name">קבוצה</th><th>מש׳</th><th>נ׳</th><th>ה׳</th><th>הפרש</th><th>נק׳</th></tr></thead><tbody>`;
+  for (const r of rows) {
+    const us = ourTeam && r.team.id === ourTeam.id;
+    html += `<tr class="${us ? 'us' : ''}" onclick="location.hash='#/team/${esc(r.team.id)}'">
+      <td>${r.rank}${r.tied ? '*' : ''}</td>
+      <td class="t-name">${dot(r.team)}<span>${esc(r.team.name)}</span></td>
+      <td>${r.played}</td><td class="c-W">${r.wins}</td><td class="c-L">${r.losses}</td>
+      <td dir="ltr">${r.diff > 0 ? '+' : ''}${r.diff}</td><td><b>${r.pts}</b></td></tr>`;
+  }
+  html += `</tbody></table>
+    <div class="legend">ניצחון = ${esc(st.win_points)} נק׳ ליגה · הפסד = ${esc(st.loss_points)} נק׳ ליגה · שוברי שוויון: ${esc(st.tiebreakers)}${rows.some(r => r.tied) ? ' · * שוויון שיוכרע ע״י הנהלת הליגה' : ''}</div>
+  </div>`;
+  return html;
+}
+
+function viewSchedule(roundParam) {
+  const lid = currentLeagueId();
+  const games = data.games.filter(g => g.league_id === lid).sort(gameSort);
+  const rounds = [...new Set(games.map(g => g.round_number).filter(n => n != null))].sort((a, b) => a - b);
+  // Default to the first round that still has unplayed games.
+  const nextRound = (games.find(g => !isFinished(g)) || {}).round_number;
+  const round = roundParam === 'all' ? 'all' : roundParam != null && rounds.includes(Number(roundParam)) ? Number(roundParam) : (nextRound ?? rounds[0] ?? 'all');
+  let html = `<h1 class="page-title">לוח משחקים</h1>${leaguePicker(lid)}
+    <div class="chips-scroll">${rounds.map(n => `<a class="pill ${round === n ? 'on' : ''}" href="#/schedule/${n}">מחזור ${n}</a>`).join('')}<a class="pill ${round === 'all' ? 'on' : ''}" href="#/schedule/all">הכל</a></div>`;
+  const shown = round === 'all' ? games : games.filter(g => g.round_number === round);
+  if (!shown.length) return html + `<div class="empty">אין משחקים להצגה.</div>`;
+
+  const groups = [];
+  for (const g of shown) {
+    const key = `${g.round_number ?? ''}|${g.date ?? ''}`;
+    let grp = groups[groups.length - 1];
+    if (!grp || grp.key !== key) groups.push(grp = { key, round: g.round_number, date: g.date, games: [] });
+    grp.games.push(g);
+  }
+  for (const grp of groups) {
+    html += `<div class="round"><div class="round-head"><span>מחזור ${grp.round ?? '—'}</span><span>${fmtDate(grp.date)}</span></div>`;
+    for (const g of grp.games) {
+      const w = winnerSide(g);
+      const ours = ourTeam && sideOf(g, ourTeam.id);
+      const side = s => {
+        const id = teamIdOf(g, s), t = teamById(id);
+        return `<div class="fx-team ${w === s ? 'won' : w ? 'lost' : ''}">${id ? `<a href="#/team/${esc(id)}">${esc(teamName(g, s))}</a>` : esc(teamName(g, s))}${dot(t)}</div>`;
+      };
+      const mid = isFinished(g)
+        ? `<div class="fx-score">${esc(scoreText(g, 'a'))}</div>`
+        : `<div class="fx-time">${g.time ? esc(g.time) : '—'}${g.court ? `<small>מגרש ${esc(g.court)}</small>` : ''}</div>`;
+      html += `<div class="fixture ${ours ? 'fx-ours' : ''}">${side('a')}${mid}${side('b').replace('fx-team', 'fx-team fx-b')}</div>`;
+    }
+    html += `</div>`;
+  }
+  return html;
+}
+
+function viewTeams() {
+  const lid = currentLeagueId();
+  const teams = data.teams.filter(t => t.league_id === lid && isApproved(t)).sort((a, b) => a.name.localeCompare(b.name, 'he'));
+  let html = `<h1 class="page-title">קבוצות</h1>${leaguePicker(lid)}`;
+  if (!teams.length) return html + `<div class="empty">אין קבוצות בליגה הזו.</div>`;
+  html += `<div class="team-grid">`;
+  for (const t of teams) {
+    const rec = recordOf(t.id), us = ourTeam && t.id === ourTeam.id;
+    html += `<a class="team-card ${us ? 'us' : ''}" href="#/team/${esc(t.id)}">
+      <div class="team-card-head">${dot(t)}<strong>${esc(t.name)}</strong>${us ? '<span class="us-tag">אנחנו</span>' : ''}</div>
+      <div class="team-card-players">${t.players.map(esc).join(' · ') || '—'}</div>
+      <div class="team-card-rec">${recordText(rec)}</div>
+    </a>`;
+  }
+  return html + `</div>`;
+}
+
+// Back within the app if we navigated here; otherwise (opened by direct link) go home.
+function goBack() {
+  let navigated = false;
+  try { navigated = !!sessionStorage.getItem('fl-nav'); } catch { /* storage unavailable */ }
+  if (navigated) history.back(); else location.hash = '#/';
+}
+window.goBack = goBack;
+
 // ---- Render / routing ---------------------------------------------------
+const TABS = [
+  { id: 'home', href: '#/', label: 'בית', icon: '🏠' },
+  { id: 'standings', href: '#/standings', label: 'טבלאות', icon: '🏆' },
+  { id: 'schedule', href: '#/schedule', label: 'לוח משחקים', icon: '📅' },
+  { id: 'teams', href: '#/teams', label: 'קבוצות', icon: '👥' },
+];
+
+function route() {
+  const h = location.hash;
+  let m;
+  if ((m = h.match(/^#\/team\/([\w-]+)/))) return { tab: null, html: () => viewTeam(m[1]) };
+  if (h.startsWith('#/standings')) return { tab: 'standings', html: viewStandings };
+  if ((m = h.match(/^#\/schedule(?:\/([\w]+))?/))) return { tab: 'schedule', html: () => viewSchedule(m[1]) };
+  if (h.startsWith('#/teams')) return { tab: 'teams', html: viewTeams };
+  return { tab: 'home', html: viewHome };
+}
+
+function renderTabs(active) {
+  document.getElementById('tabs').innerHTML = TABS.map(t =>
+    `<a href="${t.href}" class="${t.id === active ? 'on' : ''}"><span class="tab-icon" aria-hidden="true">${t.icon}</span><span>${t.label}</span></a>`).join('');
+}
+
 function render() {
   const app = document.getElementById('app');
   if (!data) {
@@ -328,14 +511,18 @@ function render() {
       : `<div class="loading">טוען נתונים מהליגה…</div>`;
     return;
   }
-  const m = location.hash.match(/^#\/team\/([\w-]+)/);
+  const r = route();
+  renderTabs(r.tab);
   app.innerHTML = (loadError ? `<div class="warn">מוצגים נתונים שמורים – אין חיבור לאתר הליגה כרגע.</div>` : '')
-    + (m ? viewTeam(m[1]) : viewHome());
+    + r.html();
   const upd = document.getElementById('updated');
   upd.textContent = `עודכן ${new Date(data.fetchedAt).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}`;
 }
 
-window.addEventListener('hashchange', () => { render(); window.scrollTo(0, 0); });
+window.addEventListener('hashchange', () => {
+  try { sessionStorage.setItem('fl-nav', '1'); } catch { /* storage unavailable */ }
+  render(); window.scrollTo(0, 0);
+});
 document.getElementById('refresh').addEventListener('click', refresh);
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && data && Date.now() - data.fetchedAt > AUTO_REFRESH_MS) refresh();
