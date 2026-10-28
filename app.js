@@ -179,8 +179,8 @@ function standings(leagueId) {
     const grp = rows.slice(i, j);
     if (grp.length === 2) {
       const [x, y] = grp, xy = h2h[x.team.id]?.[y.team.id] || 0, yx = h2h[y.team.id]?.[x.team.id] || 0;
-      if (yx > xy) grp.reverse(); else if (xy === yx) grp.forEach(r => { r.tied = true; });
-    } else if (grp.length > 2) grp.forEach(r => { r.tied = true; });
+      if (yx > xy) grp.reverse(); else if (xy === yx && x.played) grp.forEach(r => { r.tied = true; });
+    } else if (grp.length > 2 && grp[0].played) grp.forEach(r => { r.tied = true; });
     out.push(...grp);
     i = j;
   }
@@ -407,7 +407,7 @@ function viewStandings() {
     const us = ourTeam && r.team.id === ourTeam.id;
     html += `<tr class="${us ? 'us' : ''}" onclick="location.hash='#/team/${esc(r.team.id)}'">
       <td>${r.rank}${r.tied ? '*' : ''}</td>
-      <td class="t-name">${dot(r.team)}<span>${esc(r.team.name)}</span></td>
+      <td class="t-name"><div class="t-cell">${dot(r.team)}<span>${esc(r.team.name)}</span></div></td>
       <td>${r.played}</td><td class="c-W">${r.wins}</td><td class="c-L">${r.losses}</td>
       <td dir="ltr">${r.diff > 0 ? '+' : ''}${r.diff}</td><td><b>${r.pts}</b></td></tr>`;
   }
