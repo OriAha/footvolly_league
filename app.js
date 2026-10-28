@@ -488,7 +488,9 @@ function viewTeams() {
 }
 
 // Back within the app if we navigated here; otherwise (opened by direct link) go home.
+let restoringScroll = false;
 function goBack() {
+  restoringScroll = true;
   let navigated = false;
   try { navigated = !!sessionStorage.getItem('fl-nav'); } catch { /* storage unavailable */ }
   if (navigated) history.back(); else location.hash = '#/';
@@ -564,10 +566,25 @@ function render() {
   upd.textContent = `עודכן ${new Date(data.fetchedAt).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}`;
 }
 
-window.addEventListener('hashchange', () => {
+// New pages open at the top; "חזרה" returns to where you were in the list.
+// iOS Safari can re-apply its own scroll after the content swap, so we set it again on the next frames.
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+const scrollPos = {};
+let lastY = 0;
+window.addEventListener('scroll', () => { lastY = window.scrollY; }, { passive: true });
+function scrollToY(y) {
+  window.scrollTo(0, y);
+  requestAnimationFrame(() => window.scrollTo(0, y));
+  setTimeout(() => window.scrollTo(0, y), 60);
+}
+window.addEventListener('hashchange', e => {
   setMenu(false);
   try { sessionStorage.setItem('fl-nav', '1'); } catch { /* storage unavailable */ }
-  render(); window.scrollTo(0, 0);
+  scrollPos[e.oldURL] = lastY;
+  const y = restoringScroll ? scrollPos[e.newURL] || 0 : 0;
+  restoringScroll = false;
+  render();
+  scrollToY(y);
 });
 document.getElementById('refresh').addEventListener('click', refresh);
 document.getElementById('menu-btn').addEventListener('click', () => setMenu(!document.body.classList.contains('menu-open')));
