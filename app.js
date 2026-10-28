@@ -500,14 +500,17 @@ function route() {
 
 function renderTabs(active) {
   document.getElementById('tabs').innerHTML =
-    `<div class="menu-head"><strong>תפריט</strong><button class="icon-btn menu-close" onclick="setMenu(false)" aria-label="סגירת התפריט">✕</button></div>`
-    + TABS.map(t =>
+    TABS.map(t =>
       `<a href="${t.href}" class="${t.id === active ? 'on' : ''}" onclick="setMenu(false)"><span class="tab-icon" aria-hidden="true">${t.icon}</span><span>${t.label}</span></a>`).join('');
 }
 
+// The header (with the ☰/✕ toggle) stays above the open menu, so the same button always closes it.
 function setMenu(open) {
+  const btn = document.getElementById('menu-btn');
+  document.documentElement.style.setProperty('--hdr', document.querySelector('.topbar').offsetHeight + 'px');
   document.body.classList.toggle('menu-open', open);
-  document.getElementById('menu-btn').setAttribute('aria-expanded', String(open));
+  btn.setAttribute('aria-expanded', String(open));
+  btn.textContent = open ? '✕' : '☰';
 }
 window.setMenu = setMenu;
 
@@ -528,12 +531,15 @@ function render() {
 }
 
 window.addEventListener('hashchange', () => {
+  setMenu(false);
   try { sessionStorage.setItem('fl-nav', '1'); } catch { /* storage unavailable */ }
   render(); window.scrollTo(0, 0);
 });
 document.getElementById('refresh').addEventListener('click', refresh);
 document.getElementById('menu-btn').addEventListener('click', () => setMenu(!document.body.classList.contains('menu-open')));
-document.getElementById('scrim').addEventListener('click', () => setMenu(false));
+const scrim = document.getElementById('scrim');
+scrim.addEventListener('click', () => setMenu(false));
+scrim.addEventListener('touchend', e => { e.preventDefault(); setMenu(false); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') setMenu(false); });
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && data && Date.now() - data.fetchedAt > AUTO_REFRESH_MS) refresh();
