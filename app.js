@@ -262,10 +262,25 @@ function viewHome() {
   const rec = recordOf(ourTeam.id);
   const next = games.find(g => !isFinished(g) && (daysUntil(g.date) ?? 0) >= 0);
 
+  // Live table position, from the same standings as the טבלאות tab.
+  const table = standings(ourTeam.league_id);
+  const row = table.find(r => r.team.id === ourTeam.id);
+  const started = table.some(r => r.played);
+  const rankBox = row ? `
+      <a class="rank-box" href="#/standings" onclick="setLeague('${esc(ourTeam.league_id)}')">
+        <div class="rank-main"><span class="rank-label">מקום בטבלה</span>
+          <span class="rank-num">${started ? row.rank : '—'}</span><span class="rank-of">מתוך ${table.length}</span></div>
+        <div class="rank-side">${started
+          ? `<span><b>${row.pts}</b> נק׳</span><span dir="ltr">${row.diff > 0 ? '+' : ''}${row.diff}</span><small>הפרש</small>`
+          : '<small>יתעדכן אחרי המחזור הראשון</small>'}</div>
+        <span class="chev">‹</span>
+      </a>` : '';
+
   let html = `
     <section class="hero">
       <div class="hero-team">${dot(ourTeam)}<h1>${esc(ourTeam.name)}</h1></div>
       <div class="players">${ourTeam.players.map(p => `<span class="chip">${esc(p)}</span>`).join('')}</div>
+      ${rankBox}
       <div class="stats">
         <div><b>${games.length}</b><small>משחקים</small></div>
         <div><b class="c-W">${rec.W}</b><small>ניצחונות</small></div>
@@ -501,8 +516,27 @@ function route() {
 function renderTabs(active) {
   document.getElementById('tabs').innerHTML =
     TABS.map(t =>
-      `<a href="${t.href}" class="${t.id === active ? 'on' : ''}" onclick="setMenu(false)"><span class="tab-icon" aria-hidden="true">${t.icon}</span><span>${t.label}</span></a>`).join('');
+      `<a href="${t.href}" class="${t.id === active ? 'on' : ''}" onclick="setMenu(false)"><span class="tab-icon" aria-hidden="true">${t.icon}</span><span>${t.label}</span></a>`).join('')
+    + `<div class="theme-pick"><span>מצב תצוגה</span><div class="seg">${THEMES.map(([id, label]) =>
+      `<button class="${currentTheme() === id ? 'on' : ''}" onclick="setTheme('${id}')">${label}</button>`).join('')}</div></div>`;
 }
+
+// ---- Theme (auto = follow the phone) -----------------------------------
+const THEME_KEY = 'fl-theme';
+const THEMES = [['auto', 'אוטומטי'], ['light', '☀️ בהיר'], ['dark', '🌙 כהה']];
+function currentTheme() {
+  try { return localStorage.getItem(THEME_KEY) || 'auto'; } catch { return 'auto'; }
+}
+function applyTheme(t) {
+  if (t === 'auto') delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = t;
+}
+function setTheme(t) {
+  try { if (t === 'auto') localStorage.removeItem(THEME_KEY); else localStorage.setItem(THEME_KEY, t); } catch { /* storage unavailable */ }
+  applyTheme(t);
+  renderTabs(route().tab);
+}
+window.setTheme = setTheme;
 
 // The header (with the ☰/✕ toggle) stays above the open menu, so the same button always closes it.
 function setMenu(open) {

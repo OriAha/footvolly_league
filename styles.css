@@ -14,8 +14,9 @@
   --tie-bg: #fff4cc;
   --radius: 14px;
 }
+/* Dark theme: follows the phone unless the viewer picked light/dark in the menu (data-theme). */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #0b1220;
     --card: #141d2e;
     --text: #e8eef8;
@@ -29,7 +30,24 @@
     --loss-bg: #3a1717;
     --tie: #f0c84b;
     --tie-bg: #352c0c;
+    color-scheme: dark;
   }
+}
+:root[data-theme="dark"] {
+  --bg: #0b1220;
+  --card: #141d2e;
+  --text: #e8eef8;
+  --muted: #8b9ab2;
+  --line: #233049;
+  --brand: #07101e;
+  --accent: #5aa2ff;
+  --win: #3ccf78;
+  --win-bg: #12321f;
+  --loss: #ff6b6b;
+  --loss-bg: #3a1717;
+  --tie: #f0c84b;
+  --tie-bg: #352c0c;
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -99,6 +117,20 @@ main { flex: 1; width: 100%; max-width: 640px; margin: 0 auto; padding: 16px; }
 .stats div { text-align: center; background: var(--bg); border-radius: 10px; padding: 8px 4px; }
 .stats b { display: block; font-size: 20px; font-weight: 800; }
 .stats small { color: var(--muted); font-size: 12px; }
+
+.rank-box {
+  display: flex; align-items: center; gap: 12px; margin-top: 14px; padding: 10px 14px;
+  border-radius: 12px; background: color-mix(in srgb, var(--accent) 12%, var(--card));
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.rank-main { display: flex; align-items: baseline; gap: 6px; white-space: nowrap; }
+.rank-label { font-size: 13px; color: var(--muted); font-weight: 700; }
+.rank-num { font-size: 30px; font-weight: 800; color: var(--accent); line-height: 1; }
+.rank-of { font-size: 13px; color: var(--muted); }
+.rank-side { display: flex; align-items: baseline; justify-content: flex-end; flex-wrap: wrap; gap: 6px; margin-inline-start: auto; font-size: 14px; text-align: end; }
+.rank-side b { font-size: 18px; }
+.rank-side small { color: var(--muted); font-size: 12px; }
+.rank-box .chev { margin-inline-start: 4px; }
 .c-W { color: var(--win); }
 .c-L { color: var(--loss); }
 
@@ -269,3 +301,8 @@ a.game:active { background: var(--bg); }
 
 button.back { background: none; border: 0; font: inherit; cursor: pointer; padding: 0; }
 .foot a { color: var(--accent); }
+
+/* Theme picker in the menu */
+.theme-pick { margin-top: 12px; padding: 12px 6px 4px; border-top: 1px solid var(--line); }
+.theme-pick > span { display: block; font-size: 13px; color: var(--muted); font-weight: 700; margin-bottom: 8px; }
+.theme-pick .seg { margin-bottom: 0; background: var(--bg); }
