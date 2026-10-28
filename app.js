@@ -9,7 +9,7 @@ const OUR_LEAGUE_NAME = 'ליגה שנייה';
 const FINISHED = 'הסתיים';
 const CACHE_KEY = 'fl-cache-v1';
 const AUTO_REFRESH_MS = 2 * 60 * 1000;
-const APP_VERSION = 11;
+const APP_VERSION = 12;
 
 // Same queries the league site itself makes for its public pages.
 const SOURCES = {
@@ -75,7 +75,7 @@ async function refresh() {
   refreshing = true;
   document.body.classList.add('is-refreshing');
   try {
-    const d = await loadData();
+    const [d] = await Promise.all([loadData(), loadSharedNotes().catch(() => { /* keep cached notes */ })]);
     setData(d);
     writeCache(d);
     loadError = null;
@@ -367,10 +367,10 @@ function viewTeam(id) {
       ${played.length ? `<div class="form">${played.slice(0, 5).map(g => { const r = resultFor(g, id); return `<span class="form-${r}" title="${RESULT_LABEL[r]}">${r === 'W' ? 'נ' : r === 'L' ? 'ה' : 'ת'}</span>`; }).join('')}<small>5 אחרונים</small></div>` : ''}
     </section>`;
 
-  if (!isUs) {
-    const note = noteFor(id);
+  const note = isUs ? '' : noteFor(id);
+  if (note || (!isUs && canEdit())) {
     html += `<section class="note-view">
-      <div class="note-view-head"><strong>📝 ההערות שלי</strong><a class="note-edit" href="#/notes/${esc(id)}">${note ? '✏️ עריכה' : '➕ הוספת הערה'}</a></div>
+      <div class="note-view-head"><strong>📝 הערות</strong>${canEdit() ? `<a class="note-edit" href="#/notes/${esc(id)}">${note ? '✏️ עריכה' : '➕ הוספת הערה'}</a>` : ''}</div>
       ${note ? `<div class="note-body">${esc(note)}</div>` : '<div class="muted">עדיין אין הערות על הקבוצה הזו.</div>'}
     </section>`;
   }
@@ -505,19 +505,73 @@ function goBack() {
 window.goBack = goBack;
 
 // ---- Render / routing ---------------------------------------------------
-// ---- Notes (saved on this device only) ---------------------------------
-const NOTES_KEY = 'fl-notes-v1';
-function readNotes() {
-  try { return JSON.parse(localStorage.getItem(NOTES_KEY)) || {}; } catch { return {}; }
+// ---- Notes (shared: notes.json in the GitHub repo) ----------------------
+// Everyone reads notes.json; editing needs a GitHub token (Contents: read & write on this repo)
+// that an editor pastes once and that stays on their own device.
+const REPO = 'OriAha/footvolly_league';
+const NOTES_FILE = 'notes.json';
+const NOTES_RAW = `https://raw.githubusercontent.com/${REPO}/main/${NOTES_FILE}`;
+const NOTES_API = `https://api.github.com/repos/${REPO}/contents/${NOTES_FILE}`;
+const NOTES_CACHE_KEY = 'fl-notes-shared';
+const OLD_LOCAL_NOTES_KEY = 'fl-notes-v1';
+const TOKEN_KEY = 'fl-gh-token';
+
+let sharedNotes = (() => { try { return JSON.parse(localStorage.getItem(NOTES_CACHE_KEY)) || {}; } catch { return {}; } })();
+
+function getToken() { try { return localStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; } }
+const canEdit = () => !!getToken();
+
+function setSharedNotes(n) {
+  sharedNotes = n && typeof n === 'object' ? n : {};
+  try { localStorage.setItem(NOTES_CACHE_KEY, JSON.stringify(sharedNotes)); } catch { /* storage unavailable */ }
 }
 function noteFor(teamId) {
-  const n = readNotes()[teamId];
+  const n = sharedNotes[teamId];
   return n && n.text ? n.text : '';
 }
-function saveNote(teamId, text) {
-  const all = readNotes();
-  if (text.trim()) all[teamId] = { text, updated: Date.now() }; else delete all[teamId];
-  try { localStorage.setItem(NOTES_KEY, JSON.stringify(all)); return true; } catch { return false; }
+
+// Editors read through the API (always current); viewers read the public raw file (can lag a few minutes).
+async function loadSharedNotes() {
+  if (canEdit()) {
+    try { return setSharedNotes((await readRemoteNotes()).notes); } catch { /* fall back to the public file */ }
+  }
+  const res = await fetch(`${NOTES_RAW}?t=${Date.now()}`, { cache: 'no-store' });
+  if (res.status === 404) return setSharedNotes({});
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  setSharedNotes(await res.json());
+}
+
+// UTF-8 safe base64 for the GitHub contents API.
+const b64encode = str => { const bytes = new TextEncoder().encode(str); let bin = ''; bytes.forEach(b => { bin += String.fromCharCode(b); }); return btoa(bin); };
+const b64decode = b64 => new TextDecoder().decode(Uint8Array.from(atob(b64.replace(/\s/g, '')), c => c.charCodeAt(0)));
+
+function ghHeaders() {
+  return { Authorization: `Bearer ${getToken()}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' };
+}
+async function readRemoteNotes() {
+  const res = await fetch(`${NOTES_API}?ref=main&t=${Date.now()}`, { headers: ghHeaders(), cache: 'no-store' });
+  if (res.status === 404) return { notes: {}, sha: null };
+  if (res.status === 401 || res.status === 403) throw new Error('auth');
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const j = await res.json();
+  return { notes: JSON.parse(b64decode(j.content) || '{}'), sha: j.sha };
+}
+
+// Apply `changes` ({teamId: text}) on top of the latest remote file and commit it. Retries on a write race.
+async function writeNotes(changes, message) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { notes, sha } = await readRemoteNotes();
+    for (const [id, text] of Object.entries(changes)) {
+      if (text.trim()) notes[id] = { text, updated: Date.now() }; else delete notes[id];
+    }
+    const body = { message, content: b64encode(JSON.stringify(notes, null, 2) + '\n'), branch: 'main' };
+    if (sha) body.sha = sha;
+    const res = await fetch(NOTES_API, { method: 'PUT', headers: { ...ghHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (res.ok) { setSharedNotes(notes); return; }
+    if (res.status === 401 || res.status === 403) throw new Error('auth');
+    if (res.status !== 409 && res.status !== 422) throw new Error(`HTTP ${res.status}`);
+  }
+  throw new Error('conflict');
 }
 
 // Our league's other teams, ordered by when we next meet them.
@@ -537,67 +591,96 @@ function notesTeams() {
 
 function viewNotes() {
   const items = notesTeams();
+  const edit = canEdit();
   let html = `<h1 class="page-title">הערות על היריבות</h1>
-    <p class="page-sub">ההערות מופיעות בעמוד של כל קבוצה כשנכנסים אליה מלוח המשחקים. הן נשמרות אוטומטית, רק במכשיר הזה.</p>`;
+    <p class="page-sub">ההערות גלויות לכל מי שנכנס לאתר, ומופיעות גם בעמוד של כל קבוצה.${edit ? ' שינויים נשמרים אוטומטית לכולם.' : ''}</p>`;
   if (!items.length) return html + `<div class="empty">אין קבוצות להצגה.</div>`;
   for (const { team, next } of items) {
+    const note = noteFor(team.id);
+    if (!edit && !note) continue;
     html += `<div class="note-card" id="note-${esc(team.id)}">
       <div class="note-head">${dot(team)}<a class="team-link" href="#/team/${esc(team.id)}">${esc(team.name)}</a>${playersParen(team)}</div>
       <div class="note-meta">${next ? `המשחק הבא מולם: ${fmtDate(next.date)}${next.time ? ` · ${esc(next.time)}` : ''}` : 'אין משחק קרוב מולם'}</div>
-      <textarea class="note-text" data-team="${esc(team.id)}" rows="3" placeholder="למשל: מי חזק בהגשה, איך הם מגנים, למה לשים לב…">${esc(noteFor(team.id))}</textarea>
-      <div class="note-status" data-status="${esc(team.id)}"></div>
+      ${edit
+        ? `<textarea class="note-text" data-team="${esc(team.id)}" rows="3" placeholder="למשל: מי חזק בהגשה, איך הם מגנים, למה לשים לב…">${esc(note)}</textarea>
+           <div class="note-status" data-status="${esc(team.id)}"></div>`
+        : `<div class="note-body">${esc(note)}</div>`}
     </div>`;
   }
-  html += `<div class="note-backup">
-      <button class="btn btn-ghost" onclick="exportNotes()">📤 שמירת גיבוי</button>
-      <label class="btn btn-ghost">📥 שחזור מגיבוי<input type="file" accept=".json,application/json" onchange="importNotes(this)" hidden></label>
-      <small>באייפון, נתונים של אתר שלא נכנסים אליו 7 ימים עלולים להימחק. פתיחה מהאייקון במסך הבית מונעת את זה, ושווה לשמור גיבוי מדי פעם.</small>
-    </div>`;
+  if (!edit && !items.some(i => noteFor(i.team.id))) html += `<div class="empty">עדיין אין הערות.</div>`;
+  html += `<div class="note-backup">${edit
+    ? `<span class="muted">✏️ מצב עריכה פעיל במכשיר הזה</span><button class="btn btn-ghost" onclick="logoutEditor()">יציאה ממצב עריכה</button>`
+    : `<button class="btn btn-ghost" onclick="loginEditor()">🔑 כניסה לעריכה</button><small>עריכה דורשת מפתח עריכה (GitHub token) של מנהל האתר.</small>`}</div>`;
   return html;
 }
 
+async function loginEditor() {
+  const t = (prompt('הדביקו את מפתח העריכה (GitHub token):') || '').trim();
+  if (!t) return;
+  try { localStorage.setItem(TOKEN_KEY, t); } catch { alert('לא ניתן לשמור במכשיר הזה'); return; }
+  try {
+    await readRemoteNotes();
+    await migrateLocalNotes();
+    render();
+  } catch (e) {
+    try { localStorage.removeItem(TOKEN_KEY); } catch { /* storage unavailable */ }
+    alert(e.message === 'auth' ? 'המפתח לא תקין או שאין לו הרשאת עריכה לריפו' : 'לא הצלחנו להתחבר ל-GitHub, נסו שוב');
+  }
+}
+function logoutEditor() {
+  try { localStorage.removeItem(TOKEN_KEY); } catch { /* storage unavailable */ }
+  render();
+}
+window.loginEditor = loginEditor;
+window.logoutEditor = logoutEditor;
+
+// Notes written before sharing existed lived only on this device: upload any the shared file lacks.
+async function migrateLocalNotes() {
+  let old = null;
+  try { old = JSON.parse(localStorage.getItem(OLD_LOCAL_NOTES_KEY)); } catch { /* ignore */ }
+  if (!old) return;
+  const { notes } = await readRemoteNotes();
+  const changes = {};
+  for (const [id, n] of Object.entries(old)) if (n && n.text && !(notes[id] && notes[id].text)) changes[id] = n.text;
+  if (Object.keys(changes).length) await writeNotes(changes, 'notes: upload notes saved on device');
+  try { localStorage.removeItem(OLD_LOCAL_NOTES_KEY); } catch { /* ignore */ }
+}
+
 const noteTimers = {};
+const pendingNotes = {};
+function setNoteStatus(id, text) {
+  const st = document.querySelector(`[data-status="${CSS.escape(id)}"]`);
+  if (st) st.textContent = text;
+}
+async function flushNote(id) {
+  clearTimeout(noteTimers[id]);
+  if (!(id in pendingNotes)) return;
+  const text = pendingNotes[id];
+  delete pendingNotes[id];
+  setNoteStatus(id, 'שומר…');
+  const name = (teamById(id) || {}).name || id;
+  try {
+    await writeNotes({ [id]: text }, `notes: ${name}`);
+    setNoteStatus(id, id in pendingNotes ? 'שומר…' : 'נשמר לכולם ✓');
+  } catch (e) {
+    pendingNotes[id] ??= text; // keep it so the next edit or blur retries
+    setNoteStatus(id, e.message === 'auth' ? 'אין הרשאה לשמור – בדקו את מפתח העריכה' : 'השמירה נכשלה – ננסה שוב בעריכה הבאה');
+  }
+}
 document.addEventListener('input', e => {
   const ta = e.target.closest && e.target.closest('textarea.note-text');
   if (!ta) return;
-  const id = ta.dataset.team, st = document.querySelector(`[data-status="${CSS.escape(id)}"]`);
-  if (st) st.textContent = 'שומר…';
+  const id = ta.dataset.team;
+  pendingNotes[id] = ta.value;
+  setNoteStatus(id, 'ממתין לשמירה…');
   clearTimeout(noteTimers[id]);
-  noteTimers[id] = setTimeout(() => {
-    const ok = saveNote(id, ta.value);
-    if (st) st.textContent = ok ? 'נשמר ✓' : 'לא ניתן לשמור במכשיר הזה';
-  }, 400);
+  noteTimers[id] = setTimeout(() => flushNote(id), 1500);
 });
 document.addEventListener('focusout', e => {
   const ta = e.target.closest && e.target.closest('textarea.note-text');
-  if (ta) { clearTimeout(noteTimers[ta.dataset.team]); saveNote(ta.dataset.team, ta.value); }
+  if (ta) flushNote(ta.dataset.team);
 });
-
-function exportNotes() {
-  const blob = new Blob([JSON.stringify(readNotes(), null, 2)], { type: 'application/json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `houthis-notes-${new Date().toISOString().slice(0, 10)}.json`;
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-}
-function importNotes(input) {
-  const f = input.files && input.files[0];
-  if (!f) return;
-  f.text().then(txt => {
-    const incoming = JSON.parse(txt);
-    if (!incoming || typeof incoming !== 'object') throw new Error('bad file');
-    const all = readNotes();
-    for (const [id, n] of Object.entries(incoming)) {
-      if (n && typeof n.text === 'string' && n.text.trim() && (!all[id] || (n.updated || 0) >= (all[id].updated || 0))) all[id] = n;
-    }
-    localStorage.setItem(NOTES_KEY, JSON.stringify(all));
-    alert('ההערות שוחזרו');
-    render();
-  }).catch(() => alert('הקובץ לא תקין'));
-}
-window.exportNotes = exportNotes;
-window.importNotes = importNotes;
+window.addEventListener('pagehide', () => Object.keys(pendingNotes).forEach(flushNote));
 
 const TABS = [
   { id: 'home', href: '#/', label: 'בית', icon: '🏠' },
@@ -701,8 +784,10 @@ function showPage(restore) {
   if (card) {
     scrollToY(Math.max(0, card.getBoundingClientRect().top + window.scrollY - document.querySelector('.topbar').offsetHeight - 12));
     const ta = card.querySelector('textarea');
-    ta.focus({ preventScroll: true });
-    ta.setSelectionRange(ta.value.length, ta.value.length);
+    if (ta) {
+      ta.focus({ preventScroll: true });
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+    }
   } else scrollToY(restore ? scrollPos[h] || 0 : 0);
 }
 function navigate(href) {
