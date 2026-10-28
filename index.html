@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>חות'ים · ליגה שנייה</title>
+  <meta name="description" content="לוח המשחקים של חות'ים בליגת החורף של אוקטופוס פוצ'יוולי 2026, ופרטי היריבות" />
+  <meta name="theme-color" content="#0b1f3a" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="חות'ים" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a href="#/" class="brand">
+      <span class="brand-ball" aria-hidden="true">⚽</span>
+      <span>
+        <strong id="team-title">חות'ים</strong>
+        <small>ליגה שנייה · ליגת החורף 2026</small>
+      </span>
+    </a>
+    <button id="refresh" class="icon-btn" aria-label="רענון נתונים" title="רענון">⟳</button>
+  </header>
+
+  <main id="app" aria-live="polite">
+    <div class="loading">טוען נתונים מהליגה…</div>
+  </main>
+
+  <footer class="foot">
+    <span id="updated"></span>
+    <span>הנתונים מתוך <a href="https://octopus-league-hub.base44.app/schedule" target="_blank" rel="noopener">אתר הליגה</a></span>
+  </footer>
+
+  <script src="app.js" defer></script>
+</body>
+</html>
