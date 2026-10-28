@@ -338,26 +338,3 @@ a.game:active { background: var(--bg); }
 .note-body { white-space: pre-wrap; font-size: 15px; line-height: 1.55; }
 .has-note { font-size: 13px; }
 
-/* Shared notes (comments) */
-.notes-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
-.note-item { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
-.note-card .note-item { background: var(--bg); }
-.note-item-head { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); margin-bottom: 2px; }
-.note-item-head strong { color: var(--text); }
-.note-actions { margin-inline-start: auto; display: flex; gap: 4px; }
-.note-actions button {
-  background: none; border: 0; color: var(--accent); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; padding: 2px 4px;
-}
-.note-form { display: flex; flex-direction: column; gap: 6px; }
-.note-form .note-text { min-height: 60px; }
-.note-form-row { display: flex; gap: 8px; }
-.note-name {
-  flex: 1; min-width: 0; font: inherit; font-size: 16px; color: var(--text);
-  background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px;
-}
-.note-form .btn { margin-top: 0; }
-.note-form .btn:disabled { opacity: .6; }
-.note-count {
-  margin-inline-start: auto; background: var(--accent); color: #fff; font-size: 12px; font-weight: 800;
-  border-radius: 999px; padding: 1px 8px;
-}

@@ -3,10 +3,8 @@
     "notes": {
       ".read": true,
       "$team": {
-        "$note": {
-          ".write": "auth != null && (!data.exists() || data.child('uid').val() === auth.uid)",
-          ".validate": "$team.matches(/^[0-9a-f]{24}$/) && newData.hasChildren(['text', 'uid', 'ts']) && newData.child('uid').val() === auth.uid && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 1000 && newData.child('ts').isNumber() && (!newData.child('name').exists() || (newData.child('name').isString() && newData.child('name').val().length <= 40))"
-        }
+        ".write": true,
+        ".validate": "$team.matches(/^[0-9a-f]{24}$/) && newData.hasChildren(['text', 'ts']) && newData.child('text').isString() && newData.child('text').val().length <= 3000 && newData.child('ts').isNumber()"
       }
     }
   }
