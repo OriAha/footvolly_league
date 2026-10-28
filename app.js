@@ -9,7 +9,7 @@ const OUR_LEAGUE_NAME = 'ליגה שנייה';
 const FINISHED = 'הסתיים';
 const CACHE_KEY = 'fl-cache-v1';
 const AUTO_REFRESH_MS = 2 * 60 * 1000;
-const APP_VERSION = 9;
+const APP_VERSION = 10;
 
 // Same queries the league site itself makes for its public pages.
 const SOURCES = {
@@ -488,12 +488,10 @@ function viewTeams() {
 }
 
 // Back within the app if we navigated here; otherwise (opened by direct link) go home.
-let restoringScroll = false;
 function goBack() {
-  restoringScroll = true;
   let navigated = false;
   try { navigated = !!sessionStorage.getItem('fl-nav'); } catch { /* storage unavailable */ }
-  if (navigated) history.back(); else location.hash = '#/';
+  if (navigated) history.back(); else navigate('#/');
 }
 window.goBack = goBack;
 
@@ -568,26 +566,45 @@ function render() {
   upd.textContent = `גרסה ${APP_VERSION} · עודכן ${new Date(data.fetchedAt).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}`;
 }
 
-// New pages open at the top; "חזרה" returns to where you were in the list.
-// iOS Safari can re-apply its own scroll after the content swap, so we set it again on the next frames.
+// Navigation. In-app links switch pages with pushState instead of letting the browser follow the
+// #hash itself: on iPhone the browser's own hash navigation left new pages scrolled down.
+// New pages open at the top; back/forward (incl. "חזרה") returns to where you were.
 if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
 const scrollPos = {};
 let lastY = 0;
+let shownHash = location.hash || '#/';
 window.addEventListener('scroll', () => { lastY = window.scrollY; }, { passive: true });
 function scrollToY(y) {
-  window.scrollTo(0, y);
-  requestAnimationFrame(() => window.scrollTo(0, y));
-  setTimeout(() => window.scrollTo(0, y), 60);
+  const go = () => { window.scrollTo(0, y); document.documentElement.scrollTop = y; document.body.scrollTop = y; };
+  go();
+  requestAnimationFrame(go);
+  setTimeout(go, 50);
+  setTimeout(go, 150);
 }
-window.addEventListener('hashchange', e => {
+function showPage(restore) {
+  const h = location.hash || '#/';
+  if (h === shownHash) return;
+  scrollPos[shownHash] = lastY;
+  shownHash = h;
   setMenu(false);
-  try { sessionStorage.setItem('fl-nav', '1'); } catch { /* storage unavailable */ }
-  scrollPos[e.oldURL] = lastY;
-  const y = restoringScroll ? scrollPos[e.newURL] || 0 : 0;
-  restoringScroll = false;
   render();
-  scrollToY(y);
+  scrollToY(restore ? scrollPos[h] || 0 : 0);
+}
+function navigate(href) {
+  try { sessionStorage.setItem('fl-nav', '1'); } catch { /* storage unavailable */ }
+  if ((location.hash || '#/') !== href) history.pushState(null, '', href);
+  showPage(false);
+}
+document.addEventListener('click', e => {
+  const a = e.target.closest('a[href^="#"]');
+  if (!a || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) return;
+  e.preventDefault();
+  setMenu(false);
+  navigate(a.getAttribute('href'));
 });
+window.addEventListener('popstate', () => showPage(true));
+// Fallback for hash changes that don't come through navigate() (e.g. typed URLs).
+window.addEventListener('hashchange', () => showPage(false));
 document.getElementById('refresh').addEventListener('click', refresh);
 document.getElementById('menu-btn').addEventListener('click', () => setMenu(!document.body.classList.contains('menu-open')));
 const scrim = document.getElementById('scrim');
