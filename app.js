@@ -9,6 +9,7 @@ const OUR_LEAGUE_NAME = 'ליגה שנייה';
 const FINISHED = 'הסתיים';
 const CACHE_KEY = 'fl-cache-v1';
 const AUTO_REFRESH_MS = 2 * 60 * 1000;
+const APP_VERSION = 9;
 
 // Same queries the league site itself makes for its public pages.
 const SOURCES = {
@@ -351,7 +352,6 @@ function viewTeam(id) {
   const vsUs = ourTeam && !isUs ? games.filter(g => sideOf(g, ourTeam.id)) : [];
 
   let html = `
-    <button class="back" onclick="goBack()">→ חזרה</button>
     <section class="hero">
       <div class="hero-team">${dot(team)}<h1>${esc(team.name)}</h1></div>
       <div class="sub">${esc(team.league_name || '')}</div>
@@ -560,10 +560,12 @@ function render() {
   }
   const r = route();
   renderTabs(r.tab);
+  // Team pages get a back button in the sticky header, so it is visible at any scroll position.
+  document.getElementById('head-back').hidden = r.tab !== null;
   app.innerHTML = (loadError ? `<div class="warn">מוצגים נתונים שמורים – אין חיבור לאתר הליגה כרגע.</div>` : '')
     + r.html();
   const upd = document.getElementById('updated');
-  upd.textContent = `עודכן ${new Date(data.fetchedAt).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}`;
+  upd.textContent = `גרסה ${APP_VERSION} · עודכן ${new Date(data.fetchedAt).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}`;
 }
 
 // New pages open at the top; "חזרה" returns to where you were in the list.

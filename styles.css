@@ -73,7 +73,8 @@ a { color: inherit; text-decoration: none; }
 .brand { display: flex; align-items: center; gap: 10px; }
 .brand-ball { font-size: 26px; }
 .brand strong { display: block; font-size: 18px; font-weight: 800; }
-.brand small { display: block; font-size: 12px; opacity: .75; }
+.brand small { display: block; font-size: 12px; opacity: .75; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.brand, .brand > span, .head-start { min-width: 0; }
 .icon-btn {
   background: rgba(255,255,255,.12); color: #fff; border: 0; border-radius: 50%;
   width: 40px; height: 40px; font-size: 20px; cursor: pointer;
@@ -197,7 +198,6 @@ a.game:active { background: var(--bg); }
 .badge-L { background: var(--loss-bg); color: var(--loss); }
 .badge-T { background: var(--tie-bg); color: var(--tie); }
 
-.back { display: inline-block; color: var(--accent); font-weight: 700; margin: 0 4px 12px; }
 
 .upcoming summary {
   cursor: pointer; font-weight: 700; margin: 18px 4px 8px; font-size: 16px;
@@ -299,7 +299,12 @@ a.game:active { background: var(--bg); }
 .team-card-players { color: var(--text); font-size: 14px; margin-top: 6px; }
 .team-card-rec { color: var(--muted); font-size: 12px; margin-top: 4px; }
 
-button.back { background: none; border: 0; font: inherit; cursor: pointer; padding: 0; }
+.head-end { display: flex; align-items: center; gap: 8px; }
+.head-back {
+  height: 40px; padding: 0 14px; border: 0; border-radius: 999px; cursor: pointer;
+  background: var(--accent); color: #fff; font: inherit; font-size: 15px; font-weight: 800; white-space: nowrap;
+}
+.head-back[hidden] { display: none; }
 .foot a { color: var(--accent); }
 
 /* Theme picker in the menu */
