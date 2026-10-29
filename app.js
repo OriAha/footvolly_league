@@ -9,7 +9,7 @@ const OUR_LEAGUE_NAME = 'ליגה שנייה';
 const FINISHED = 'הסתיים';
 const CACHE_KEY = 'fl-cache-v1';
 const AUTO_REFRESH_MS = 2 * 60 * 1000;
-const APP_VERSION = 14;
+const APP_VERSION = 15;
 
 // Same queries the league site itself makes for its public pages.
 const SOURCES = {
@@ -64,6 +64,7 @@ function writeCache(d) {
 
 function setData(d) {
   data = d;
+  estimateTimes(data.games);
   ourTeam = data.teams.find(t => t.id === OUR_TEAM_ID)
     || data.teams.find(t => OUR_TEAM_NAME_RE.test(t.name) && t.league_name === OUR_LEAGUE_NAME)
     || null;
@@ -127,9 +128,33 @@ function scoreText(g, s) {
   return g.sets_summary || '';
 }
 
+// Rounds the league hasn't timed yet get the first fully-timed round's time slots, in the order the
+// official site lists the games (the API order). Shown as "משוער"; official times always win.
+function estimateTimes(games) {
+  const rounds = {};
+  for (const g of games) {
+    delete g.est_time;
+    if (g.round_number == null || g.is_final_four || (g.game_type && g.game_type !== 'regular')) continue;
+    (rounds[`${g.league_id}|${g.round_number}`] ||= []).push(g);
+  }
+  const template = {};
+  for (const [key, gs] of Object.entries(rounds)) {
+    const [lid, rn] = key.split('|');
+    if (gs.every(g => g.time) && (!template[lid] || Number(rn) < template[lid].rn)) {
+      template[lid] = { rn: Number(rn), times: gs.map(g => g.time).sort() };
+    }
+  }
+  for (const [key, gs] of Object.entries(rounds)) {
+    const t = template[key.split('|')[0]];
+    if (!t || gs.some(g => g.time)) continue;
+    gs.forEach((g, i) => { if (t.times[i]) g.est_time = t.times[i]; });
+  }
+}
+const timeOf = g => g.time || g.est_time || '';
+
 function gameSort(a, b) {
   return (a.date || '9999').localeCompare(b.date || '9999')
-    || (a.time || '99:99').localeCompare(b.time || '99:99')
+    || (timeOf(a) || '99:99').localeCompare(timeOf(b) || '99:99')
     || (a.round_number || 0) - (b.round_number || 0);
 }
 
@@ -253,7 +278,7 @@ function teamLink(id, name) {
 }
 function whenText(g) {
   const bits = [];
-  bits.push(g.time ? g.time : 'שעה תפורסם');
+  bits.push(g.time ? g.time : g.est_time ? `${g.est_time} <span class="est">משוער</span>` : 'שעה תפורסם');
   if (g.court) bits.push(`מגרש ${esc(g.court)}`);
   return bits.join(' · ');
 }
@@ -468,7 +493,7 @@ function viewSchedule(roundParam) {
       };
       const mid = isFinished(g)
         ? `<div class="fx-score">${esc(scoreText(g, 'a'))}</div>`
-        : `<div class="fx-time">${g.time ? esc(g.time) : '—'}${g.court ? `<small>מגרש ${esc(g.court)}</small>` : ''}</div>`;
+        : `<div class="fx-time">${g.time ? esc(g.time) : g.est_time ? `${esc(g.est_time)}<small class="est">משוער</small>` : '—'}${g.court ? `<small>מגרש ${esc(g.court)}</small>` : ''}</div>`;
       html += `<div class="fixture ${ours ? 'fx-ours' : ''}">${side('a')}${mid}${side('b').replace('fx-team', 'fx-team fx-b')}</div>`;
     }
     html += `</div>`;
