@@ -9,7 +9,7 @@ const OUR_LEAGUE_NAME = 'ליגה שנייה';
 const FINISHED = 'הסתיים';
 const CACHE_KEY = 'fl-cache-v1';
 const AUTO_REFRESH_MS = 2 * 60 * 1000;
-const APP_VERSION = 16;
+const APP_VERSION = 17;
 
 // Same queries the league site itself makes for its public pages.
 const SOURCES = {
@@ -489,7 +489,9 @@ function viewSchedule(roundParam) {
       const ours = ourTeam && sideOf(g, ourTeam.id);
       const side = s => {
         const id = teamIdOf(g, s), t = teamById(id);
-        return `<div class="fx-team ${w === s ? 'won' : w ? 'lost' : ''}">${id ? `<a href="#/team/${esc(id)}">${esc(teamName(g, s))}</a>` : esc(teamName(g, s))}${dot(t)}</div>`;
+        const name = id ? `<a href="#/team/${esc(id)}">${esc(teamName(g, s))}</a>` : esc(teamName(g, s));
+        const players = t && t.players.length ? `<small class="fx-players">(${t.players.map(esc).join(', ')})</small>` : '';
+        return `<div class="fx-team ${w === s ? 'won' : w ? 'lost' : ''}"><div class="fx-name">${name}${players}</div>${dot(t)}</div>`;
       };
       const mid = isFinished(g)
         ? `<div class="fx-score">${esc(scoreText(g, 'a'))}</div>`
