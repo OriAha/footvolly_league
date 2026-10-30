@@ -1,6 +1,6 @@
 // App-shell cache so the app opens offline; league data itself is cached by app.js.
-const CACHE = 'fl-shell-v15';
-const SHELL = ['./', 'index.html', 'styles.css?v=15', 'app.js?v=15', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png'];
+const CACHE = 'fl-shell-v16';
+const SHELL = ['./', 'index.html', 'styles.css?v=16', 'app.js?v=16', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));

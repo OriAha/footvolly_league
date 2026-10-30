@@ -9,7 +9,7 @@ const OUR_LEAGUE_NAME = 'ליגה שנייה';
 const FINISHED = 'הסתיים';
 const CACHE_KEY = 'fl-cache-v1';
 const AUTO_REFRESH_MS = 2 * 60 * 1000;
-const APP_VERSION = 15;
+const APP_VERSION = 16;
 
 // Same queries the league site itself makes for its public pages.
 const SOURCES = {

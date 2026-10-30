@@ -71,7 +71,11 @@ a { color: inherit; text-decoration: none; }
   background: var(--brand); color: #fff;
 }
 .brand { display: flex; align-items: center; gap: 10px; }
-.brand-ball { font-size: 26px; }
+.brand-flag {
+  width: 36px; height: 24px; flex-shrink: 0; border-radius: 4px;
+  background: linear-gradient(#CE1126 0 33.34%, #FFFFFF 33.34% 66.67%, #000000 66.67%);
+  box-shadow: 0 0 0 1px rgba(255,255,255,.35);
+}
 .brand strong { display: block; font-size: 18px; font-weight: 800; }
 .brand small { display: block; font-size: 12px; opacity: .75; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .brand, .brand > span, .head-start { min-width: 0; }
