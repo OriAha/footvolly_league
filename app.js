@@ -9,7 +9,7 @@ const OUR_LEAGUE_NAME = 'ליגה שנייה';
 const FINISHED = 'הסתיים';
 const CACHE_KEY = 'fl-cache-v1';
 const AUTO_REFRESH_MS = 2 * 60 * 1000;
-const APP_VERSION = 18;
+const APP_VERSION = 19;
 
 // Same queries the league site itself makes for its public pages.
 const SOURCES = {
@@ -292,6 +292,8 @@ function viewHome() {
 
   // Live table position, from the same standings as the טבלאות tab.
   const table = standings(ourTeam.league_id);
+  // Opponents' live table position (shown once the league has results).
+  const rankOf = id => { const r = table.find(x => x.team.id === id); return r && table.some(x => x.played) ? r.rank : null; };
   const row = table.find(r => r.team.id === ourTeam.id);
   const started = table.some(r => r.played);
   const rankBox = row ? `
@@ -326,7 +328,7 @@ function viewHome() {
         <div class="next-vs">נגד ${dot(opp)} <strong>${esc(teamName(next, os))}</strong></div>
         ${opp && opp.players.length ? `<div class="next-players">(${opp.players.map(esc).join(', ')})</div>` : ''}
         <div class="next-meta">מחזור ${next.round_number ?? '—'} · ${fmtDate(next.date)} · ${whenText(next)}</div>
-        ${opp ? `<div class="next-meta">מאזן היריבה: ${recordText(recordOf(opp.id))}</div>` : ''}
+        ${opp ? `<div class="next-meta">${rankOf(opp.id) ? `מקום ${rankOf(opp.id)} בטבלה · ` : ''}מאזן היריבה: ${recordText(recordOf(opp.id))}</div>` : ''}
         <div class="next-cta">לחצו לפרטי היריבה ←</div>
       </a>`;
   }
@@ -356,7 +358,7 @@ function viewHome() {
         <a class="game ${res ? `game-${res}` : ''} ${next === g ? 'game-next' : ''}" href="${oppId ? `#/team/${esc(oppId)}` : '#/'}">
           <div class="game-main">
             <div class="game-opp">${dot(opp)}<span>נגד <strong>${esc(teamName(g, os))}</strong>${oppId && noteText(oppId) ? ' <span class="has-note" title="יש הערות">📝</span>' : ''}${playersParen(opp)}</span></div>
-            <div class="game-meta">${whenText(g)}${oppRec ? ` · מאזן יריבה ${oppRec.played ? `${oppRec.W}-${oppRec.L}` : '0-0'}` : ''}</div>
+            <div class="game-meta">${whenText(g)}${opp && rankOf(opp.id) ? ` · <span class="opp-rank">מקום ${rankOf(opp.id)}</span>` : ''}${oppRec ? ` · מאזן ${oppRec.played ? `${oppRec.W}-${oppRec.L}` : '0-0'}` : ''}</div>
           </div>
           <div class="game-side">
             ${res ? `${badge(res)}<span class="score">${esc(scoreText(g, s))}</span>` : `<span class="chev">‹</span>`}

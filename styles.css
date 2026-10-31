@@ -364,3 +364,5 @@ a.game:active { background: var(--bg); }
 .btn-big { width: 100%; font-size: 17px; padding: 14px; margin-top: 4px; }
 .btn:disabled { opacity: .6; }
 .alert-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.opp-rank { font-weight: 700; color: var(--text); }
