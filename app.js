@@ -9,7 +9,7 @@ const OUR_LEAGUE_NAME = 'ליגה שנייה';
 const FINISHED = 'הסתיים';
 const CACHE_KEY = 'fl-cache-v1';
 const AUTO_REFRESH_MS = 2 * 60 * 1000;
-const APP_VERSION = 19;
+const APP_VERSION = 20;
 
 // Same queries the league site itself makes for its public pages.
 const SOURCES = {
@@ -379,6 +379,17 @@ function viewTeam(id) {
   const rec = recordOf(id);
   const isUs = ourTeam && id === ourTeam.id;
   const vsUs = ourTeam && !isUs ? games.filter(g => sideOf(g, ourTeam.id)) : [];
+  const table = standings(team.league_id);
+  const row = table.find(r => r.team.id === id);
+  const rankBox = row ? `
+      <a class="rank-box" href="#/standings" onclick="setLeague('${esc(team.league_id)}')">
+        <div class="rank-main"><span class="rank-label">מקום בטבלה</span>
+          <span class="rank-num">${table.some(r => r.played) ? row.rank : '—'}</span><span class="rank-of">מתוך ${table.length}</span></div>
+        <div class="rank-side">${row.played
+          ? `<span><b>${row.pts}</b> נק׳</span><span dir="ltr">${row.diff > 0 ? '+' : ''}${row.diff}</span><small>הפרש</small>`
+          : '<small>עוד לא שיחקו</small>'}</div>
+        <span class="chev">‹</span>
+      </a>` : '';
 
   let html = `
     <section class="hero">
@@ -386,6 +397,7 @@ function viewTeam(id) {
       <div class="sub">${esc(team.league_name || '')}</div>
       <h3 class="mini-title">שחקנים</h3>
       <div class="players">${team.players.length ? team.players.map(p => `<span class="chip">${esc(p)}</span>`).join('') : '<span class="muted">לא פורסמו שחקנים</span>'}</div>
+      ${rankBox}
       <div class="stats">
         <div><b>${rec.played}</b><small>שוחקו</small></div>
         <div><b class="c-W">${rec.W}</b><small>ניצחונות</small></div>
