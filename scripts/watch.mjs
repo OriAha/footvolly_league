@@ -116,7 +116,11 @@ export function compose(changes, leagueNames) {
 }
 
 export async function main() {
-  if (!SECRET) throw new Error('FIREBASE_DB_SECRET is not set');
+  if (!SECRET) {
+    // Not set up yet: finish quietly instead of failing (a failing scheduled job emails every run).
+    console.log('::warning::FIREBASE_DB_SECRET is not set – add it under Settings → Secrets → Actions to enable notifications');
+    return;
+  }
   const [games, teams, leagues] = await Promise.all([league('Game?sort=-updated_date&limit=500'), league('Team?sort=-updated_date&limit=300'), league('League?sort=order&limit=20')]);
   const next = snapshot(games, teams);
   const leagueNames = Object.fromEntries(leagues.map(l => [l.id, l.name]));
