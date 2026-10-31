@@ -141,12 +141,12 @@ export async function main() {
     return;
   }
   const changes = diff({ games: watch.state.games || {}, teams: watch.state.teams || {} }, next);
-  console.log(`${changes.length} change(s)`);
+  const subs = (await db('subs')) || {};
+  console.log(`${changes.length} change(s), ${Object.keys(subs).length} subscribed device(s)`);
   changes.forEach(c => console.log(' -', c.text));
 
   if (changes.length) {
     webpush.setVapidDetails('https://oriaha.github.io/footvolly_league/', vapid.publicKey, vapid.privateKey);
-    const subs = (await db('subs')) || {};
     for (const [id, sub] of Object.entries(subs)) {
       const mine = sub.scope === 'all' ? changes : changes.filter(c => c.league_id === ourLeague || c.ours);
       const note = compose(mine.map(c => ({ ...c })), leagueNames);
