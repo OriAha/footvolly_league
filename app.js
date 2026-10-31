@@ -9,7 +9,7 @@ const OUR_LEAGUE_NAME = 'ליגה שנייה';
 const FINISHED = 'הסתיים';
 const CACHE_KEY = 'fl-cache-v1';
 const AUTO_REFRESH_MS = 2 * 60 * 1000;
-const APP_VERSION = 17;
+const APP_VERSION = 18;
 
 // Same queries the league site itself makes for its public pages.
 const SOURCES = {
@@ -659,12 +659,148 @@ function viewNotes() {
   return html;
 }
 
+// ---- Push notifications -----------------------------------------------
+// The app subscribes this device and stores the subscription in Firebase (/subs/{id});
+// .github/workflows/watch.yml checks the league site every few minutes and sends the pushes.
+const SUB_KEY = 'fl-push-sub';
+const SCOPES = [['ours', 'רק ליגה שנייה'], ['all', 'כל הליגות']];
+let pushState = { checked: false, subscribed: false, busy: false, error: '' };
+
+const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isStandalone = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+function savedSub() { try { return JSON.parse(localStorage.getItem(SUB_KEY)) || null; } catch { return null; } }
+function storeSub(v) { try { if (v) localStorage.setItem(SUB_KEY, JSON.stringify(v)); else localStorage.removeItem(SUB_KEY); } catch { /* storage unavailable */ } }
+
+async function checkPush() {
+  if (!pushSupported()) return;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    pushState.subscribed = !!(sub && savedSub() && Notification.permission === 'granted');
+  } catch { pushState.subscribed = false; }
+  pushState.checked = true;
+  if (route().tab === 'alerts') render();
+}
+
+function b64urlToBytes(s) {
+  const b64 = (s + '='.repeat((4 - (s.length % 4)) % 4)).replace(/-/g, '+').replace(/_/g, '/');
+  return Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+}
+async function putSub(id, sub, scope) {
+  const j = sub.toJSON();
+  const res = await fetch(`${FIREBASE.databaseURL}/subs/${id}.json`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ endpoint: j.endpoint, keys: j.keys, scope, ts: Date.now() }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+
+async function enableAlerts(scope) {
+  pushState = { ...pushState, busy: true, error: '' };
+  render();
+  try {
+    const perm = await Notification.requestPermission(); // must run straight from the tap on iPhone
+    if (perm !== 'granted') throw new Error(perm === 'denied' ? 'denied' : 'dismissed');
+    const keyRes = await fetch(`${FIREBASE.databaseURL}/public/vapidPublicKey.json`, { cache: 'no-store' });
+    const key = keyRes.ok ? await keyRes.json() : null;
+    if (!key) throw new Error('nokey');
+    const reg = await navigator.serviceWorker.ready;
+    const sub = (await reg.pushManager.getSubscription())
+      || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64urlToBytes(key) });
+    const id = (savedSub() || {}).id || (Date.now().toString(36) + crypto.getRandomValues(new Uint32Array(4)).join('')).slice(0, 32);
+    await putSub(id, sub, scope);
+    storeSub({ id, scope });
+    pushState.subscribed = true;
+  } catch (e) {
+    pushState.error = {
+      denied: 'ההתראות חסומות. אפשר לאשר אותן בהגדרות הטלפון ← התראות ← חות\'ים.',
+      dismissed: 'לא אושרו התראות. נסו שוב ובחרו "אפשר".',
+      nokey: 'שירות ההתראות עוד לא הופעל בצד השרת. נסו שוב מאוחר יותר.',
+    }[e.message] || 'לא הצלחנו להפעיל התראות. בדקו את החיבור ונסו שוב.';
+  }
+  pushState.busy = false;
+  render();
+}
+async function disableAlerts() {
+  pushState.busy = true; render();
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (sub) await sub.unsubscribe();
+    const saved = savedSub();
+    if (saved) await fetch(`${FIREBASE.databaseURL}/subs/${saved.id}.json`, { method: 'DELETE' });
+  } catch { /* already gone */ }
+  storeSub(null);
+  pushState = { ...pushState, subscribed: false, busy: false, error: '' };
+  render();
+}
+async function setAlertScope(scope) {
+  const saved = savedSub();
+  if (!saved) return;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (sub) await putSub(saved.id, sub, scope);
+    storeSub({ ...saved, scope });
+  } catch { pushState.error = 'לא הצלחנו לשמור את הבחירה'; }
+  render();
+}
+async function testAlert() {
+  const reg = await navigator.serviceWorker.ready;
+  reg.showNotification("חות'ים · בדיקה", { body: 'ככה ייראו ההתראות על עדכונים מהליגה 🎉', icon: 'icon-192.png', lang: 'he', dir: 'rtl' });
+}
+window.enableAlerts = enableAlerts;
+window.disableAlerts = disableAlerts;
+window.setAlertScope = setAlertScope;
+window.testAlert = testAlert;
+
+function viewAlerts() {
+  let html = `<h1 class="page-title">התראות</h1>
+    <p class="page-sub">התראה לטלפון בכל פעם שמתעדכן משהו באתר הליגה: שעות ותאריכים של משחקים, מגרשים, תוצאות, משחקים חדשים ושינויים בקבוצות. הבדיקה רצה כל כ-10 דקות.</p>`;
+  if (isIOS() && !isStandalone()) {
+    return html + `<div class="alert-card">
+      <h3>באייפון צריך קודם להתקין את האפליקציה</h3>
+      <ol class="steps">
+        <li>בספארי, לחצו על כפתור <b>השיתוף</b> <span class="kbd">⬆️</span></li>
+        <li>בחרו <b>"הוסף למסך הבית"</b> ואז <b>"הוסף"</b></li>
+        <li>פתחו את האפליקציה <b>מהאייקון</b> במסך הבית (דגל תימן)</li>
+        <li>חזרו לכאן ולחצו "הפעלת התראות"</li>
+      </ol>
+      <small class="muted">אפל מאפשרת התראות מאתרים רק לאפליקציה שהותקנה למסך הבית (iOS 16.4 ומעלה).</small>
+    </div>`;
+  }
+  if (!pushSupported()) return html + `<div class="empty">הדפדפן הזה לא תומך בהתראות. נסו מספארי באייפון (אחרי התקנה למסך הבית) או מכרום.</div>`;
+  if (!pushState.checked) return html + `<div class="loading">בודק…</div>`;
+  const scope = (savedSub() || {}).scope || 'ours';
+  const seg = `<div class="seg">${SCOPES.map(([id, label]) =>
+    `<button class="${scope === id ? 'on' : ''}" onclick="${pushState.subscribed ? `setAlertScope('${id}')` : `this.parentNode.dataset.scope='${id}';[...this.parentNode.children].forEach(b=>b.classList.toggle('on',b===this))`}">${label}</button>`).join('')}</div>`;
+  if (pushState.subscribed) {
+    html += `<div class="alert-card on">
+      <h3>✅ ההתראות פעילות במכשיר הזה</h3>
+      <div class="mini-title">על מה לקבל התראות</div>${seg}
+      <div class="alert-actions">
+        <button class="btn btn-ghost" onclick="testAlert()">🔔 התראת בדיקה</button>
+        <button class="btn btn-ghost" onclick="disableAlerts()" ${pushState.busy ? 'disabled' : ''}>כיבוי התראות</button>
+      </div>
+    </div>`;
+  } else {
+    html += `<div class="alert-card">
+      <div class="mini-title">על מה לקבל התראות</div>${seg.replace('<div class="seg">', '<div class="seg" id="scope-pick" data-scope="ours">')}
+      <button class="btn btn-big" ${pushState.busy ? 'disabled' : ''} onclick="enableAlerts(document.getElementById('scope-pick').dataset.scope)">${pushState.busy ? 'מפעיל…' : '🔔 הפעלת התראות'}</button>
+    </div>`;
+  }
+  if (pushState.error) html += `<div class="warn">${esc(pushState.error)}</div>`;
+  return html;
+}
+
 const TABS = [
   { id: 'home', href: '#/', label: 'בית', icon: '🏠' },
   { id: 'standings', href: '#/standings', label: 'טבלאות', icon: '🏆' },
   { id: 'schedule', href: '#/schedule', label: 'לוח משחקים', icon: '📅' },
   { id: 'teams', href: '#/teams', label: 'קבוצות', icon: '👥' },
   { id: 'notes', href: '#/notes', label: 'הערות', icon: '📝' },
+  { id: 'alerts', href: '#/alerts', label: 'התראות', icon: '🔔' },
 ];
 
 function route() {
@@ -675,6 +811,7 @@ function route() {
   if ((m = h.match(/^#\/schedule(?:\/([\w]+))?/))) return { tab: 'schedule', html: () => viewSchedule(m[1]) };
   if (h.startsWith('#/teams')) return { tab: 'teams', html: viewTeams };
   if (h.startsWith('#/notes')) return { tab: 'notes', html: viewNotes };
+  if (h.startsWith('#/alerts')) return { tab: 'alerts', html: viewAlerts };
   return { tab: 'home', html: viewHome };
 }
 
@@ -799,6 +936,7 @@ const cached = readCache();
 if (cached && cached.games) { setData(cached); render(); }
 refresh();
 
+checkPush();
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 }

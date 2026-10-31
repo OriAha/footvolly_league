@@ -6,6 +6,15 @@
         ".write": true,
         ".validate": "$team.matches(/^[0-9a-f]{24}$/) && newData.hasChildren(['text', 'ts']) && newData.child('text').isString() && newData.child('text').val().length <= 3000 && newData.child('ts').isNumber()"
       }
+    },
+    "public": {
+      ".read": true
+    },
+    "subs": {
+      "$id": {
+        ".write": "$id.length >= 20 && $id.length <= 40",
+        ".validate": "newData.hasChildren(['endpoint', 'keys', 'scope']) && newData.child('endpoint').isString() && newData.child('endpoint').val().beginsWith('https://') && newData.child('endpoint').val().length < 1000 && (newData.child('scope').val() === 'ours' || newData.child('scope').val() === 'all')"
+      }
     }
   }
 }
