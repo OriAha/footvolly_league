@@ -9,7 +9,7 @@ const OUR_LEAGUE_NAME = 'ליגה שנייה';
 const FINISHED = 'הסתיים';
 const CACHE_KEY = 'fl-cache-v1';
 const AUTO_REFRESH_MS = 2 * 60 * 1000;
-const APP_VERSION = 20;
+const APP_VERSION = 21;
 
 // Same queries the league site itself makes for its public pages.
 const SOURCES = {
@@ -151,6 +151,20 @@ function estimateTimes(games) {
   }
 }
 const timeOf = g => g.time || g.est_time || '';
+const SLOT_MINUTES = 25;
+// Over = result entered, or (no result yet) its slot has passed: an earlier day, or today and more
+// than one slot after its official/estimated start. Lets "המשחק הבא" move on before results come in.
+function isOver(g, now = new Date()) {
+  if (isFinished(g)) return true;
+  if (!g.date) return false;
+  // Game dates/times are Israel time, whatever the phone's time zone.
+  const [today, clock] = IL_CLOCK.format(now).split(' ');
+  if (g.date !== today) return g.date < today;
+  if (!timeOf(g)) return false;
+  const [h, m] = timeOf(g).split(':').map(Number), [nh, nm] = clock.split(':').map(Number);
+  return nh * 60 + nm >= h * 60 + m + SLOT_MINUTES;
+}
+const IL_CLOCK = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 
 function gameSort(a, b) {
   return (a.date || '9999').localeCompare(b.date || '9999')
@@ -288,7 +302,7 @@ function viewHome() {
   if (!ourTeam) return `<div class="empty">לא נמצאה הקבוצה חות'ים בנתוני הליגה.</div>`;
   const games = gamesOf(ourTeam.id);
   const rec = recordOf(ourTeam.id);
-  const next = games.find(g => !isFinished(g) && (daysUntil(g.date) ?? 0) >= 0);
+  const next = games.find(g => !isOver(g));
 
   // Live table position, from the same standings as the טבלאות tab.
   const table = standings(ourTeam.league_id);
