@@ -53,7 +53,9 @@ function resultLine(g) {
   const score = g.sets || (g.sa != null && g.sb != null ? `${g.sa}:${g.sb}` : '');
   const winA = g.win ? g.win === g.a : Number(g.sa) > Number(g.sb);
   const winB = g.win ? g.win === g.b : Number(g.sb) > Number(g.sa);
-  if (winA || winB) return `🏁 ${winA ? g.an : g.bn} ניצחו את ${winA ? g.bn : g.an}${score ? ` ${score}` : ''}`;
+  // Scores are stored team A first; show them from the winner's side.
+  const winnerFirst = winB ? score.replace(/(\d+)\s*:\s*(\d+)/g, '$2:$1') : score;
+  if (winA || winB) return `🏁 ${winA ? g.an : g.bn} ניצחו את ${winA ? g.bn : g.an}${winnerFirst ? ` ${winnerFirst}` : ''}`;
   return `🏁 תוצאה: ${vs(g)}${score ? ` ${score}` : ''}`;
 }
 
