@@ -9,7 +9,7 @@ const OUR_LEAGUE_NAME = 'ליגה שנייה';
 const FINISHED = 'הסתיים';
 const CACHE_KEY = 'fl-cache-v1';
 const AUTO_REFRESH_MS = 2 * 60 * 1000;
-const APP_VERSION = 21;
+const APP_VERSION = 22;
 
 // Same queries the league site itself makes for its public pages.
 const SOURCES = {
@@ -76,6 +76,7 @@ async function refresh() {
   refreshing = true;
   document.body.classList.add('is-refreshing');
   try {
+    if (route().tab === 'alerts') historyState.loaded = false;
     const [d] = await Promise.all([loadData(), loadNotes().catch(() => { /* keep cached notes */ })]);
     setData(d);
     writeCache(d);
@@ -783,7 +784,7 @@ window.disableAlerts = disableAlerts;
 window.setAlertScope = setAlertScope;
 window.testAlert = testAlert;
 
-function viewAlerts() {
+function alertsControls() {
   let html = `<h1 class="page-title">התראות</h1>
     <p class="page-sub">התראה לטלפון בכל פעם שמתעדכן משהו באתר הליגה: שעות ותאריכים של משחקים, מגרשים, תוצאות, משחקים חדשים ושינויים בקבוצות. הבדיקה רצה כל כ-10 דקות.</p>`;
   if (isIOS() && !isStandalone()) {
@@ -820,6 +821,58 @@ function viewAlerts() {
   }
   if (pushState.error) html += `<div class="warn">${esc(pushState.error)}</div>`;
   return html;
+}
+
+// ---- Notification history (written by the watcher to Firebase /public/history) ----
+const HISTORY_FILTER_KEY = 'fl-history-filter';
+let historyState = { loading: false, loaded: false, items: [], error: false };
+async function loadHistory() {
+  historyState.loading = true;
+  try {
+    const q = `orderBy=${encodeURIComponent('"$key"')}&limitToLast=100`;
+    const res = await fetch(`${FIREBASE.databaseURL}/public/history.json?${q}`, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    historyState.items = Object.values((await res.json()) || {}).filter(x => x && x.ts).sort((a, b) => b.ts - a.ts);
+    historyState.error = false;
+  } catch { historyState.error = true; }
+  historyState.loading = false;
+  historyState.loaded = true;
+  if (route().tab === 'alerts') render();
+}
+function historyFilter() { try { return localStorage.getItem(HISTORY_FILTER_KEY) || 'ours'; } catch { return 'ours'; } }
+function setHistoryFilter(f) { try { localStorage.setItem(HISTORY_FILTER_KEY, f); } catch { /* storage unavailable */ } render(); }
+window.setHistoryFilter = setHistoryFilter;
+
+const HIST_DAY = new Intl.DateTimeFormat('he-IL', { weekday: 'long', day: 'numeric', month: 'numeric', timeZone: 'Asia/Jerusalem' });
+const HIST_TIME = new Intl.DateTimeFormat('he-IL', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jerusalem' });
+
+function historyBlock() {
+  if (!historyState.loaded && !historyState.loading) loadHistory();
+  const f = historyFilter();
+  const ourLeague = ourTeam && ourTeam.league_id;
+  let html = `<h2 class="section-title">היסטוריית עדכונים</h2>
+    <div class="seg">${SCOPES.map(([id, label]) => `<button class="${f === id ? 'on' : ''}" onclick="setHistoryFilter('${id}')">${label}</button>`).join('')}</div>`;
+  if (!historyState.loaded) return html + `<div class="loading">טוען…</div>`;
+  if (historyState.error && !historyState.items.length) return html + `<div class="empty">לא הצלחנו לטעון את ההיסטוריה.</div>`;
+  const entries = historyState.items
+    .map(e => ({ ...e, changes: (e.changes || []).filter(c => f === 'all' || c.ours || c.league_id === ourLeague) }))
+    .filter(e => e.changes.length);
+  if (!entries.length) return html + `<div class="empty">עדיין אין עדכונים. כל שינוי שיזוהה באתר הליגה יופיע כאן.</div>`;
+  let day = '';
+  for (const e of entries) {
+    const d = HIST_DAY.format(new Date(e.ts));
+    if (d !== day) { if (day) html += `</div>`; html += `<div class="round"><div class="round-head"><span>${esc(d)}</span></div>`; day = d; }
+    const ours = e.changes.filter(c => c.ours), rest = e.changes.filter(c => !c.ours);
+    html += `<div class="hist-item">
+      <div class="hist-time">${esc(HIST_TIME.format(new Date(e.ts)))}</div>
+      <div class="hist-lines">${[...ours, ...rest].map(c => `<div class="${c.ours ? 'hist-ours' : ''}">${esc(c.text)}</div>`).join('')}</div>
+    </div>`;
+  }
+  return html + `</div>`;
+}
+
+function viewAlerts() {
+  return alertsControls() + historyBlock();
 }
 
 const TABS = [

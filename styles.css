@@ -366,3 +366,10 @@ a.game:active { background: var(--bg); }
 .alert-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
 .opp-rank { font-weight: 700; color: var(--text); }
+
+/* Notification history */
+.hist-item { display: flex; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.hist-item:last-child { border-bottom: 0; }
+.hist-time { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; flex-shrink: 0; padding-top: 1px; }
+.hist-lines { display: flex; flex-direction: column; gap: 4px; font-size: 14px; min-width: 0; }
+.hist-ours { font-weight: 700; }

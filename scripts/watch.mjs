@@ -18,8 +18,8 @@ const MAX_LINES = 5;
 
 const SECRET = process.env.FIREBASE_DB_SECRET;
 
-async function db(path, method = 'GET', body) {
-  const res = await fetch(`${DB}/${path}.json?auth=${encodeURIComponent(SECRET)}`, {
+async function db(path, method = 'GET', body, query = '') {
+  const res = await fetch(`${DB}/${path}.json?auth=${encodeURIComponent(SECRET)}${query}`, {
     method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) throw new Error(`Firebase ${method} ${path}: HTTP ${res.status} ${await res.text()}`);
@@ -117,6 +117,17 @@ export function compose(changes, leagueNames) {
   };
 }
 
+// Every detected update goes into a public history the app's alerts page shows (newest HISTORY_MAX kept).
+const HISTORY_MAX = 300;
+async function saveHistory(changes) {
+  const ts = Date.now();
+  await db(`public/history/t${ts}`, 'PUT', {
+    ts, changes: changes.map(c => ({ text: c.text, kind: c.kind, league_id: c.league_id || '', ours: !!c.ours })),
+  });
+  const keys = Object.keys((await db('public/history', 'GET', undefined, '&shallow=true')) || {}).sort();
+  for (const k of keys.slice(0, Math.max(0, keys.length - HISTORY_MAX))) await db(`public/history/${k}`, 'DELETE');
+}
+
 export async function main() {
   if (!SECRET) {
     // Not set up yet: finish quietly instead of failing (a failing scheduled job emails every run).
@@ -146,6 +157,7 @@ export async function main() {
   const subs = (await db('subs')) || {};
   console.log(`${changes.length} change(s), ${Object.keys(subs).length} subscribed device(s)`);
   changes.forEach(c => console.log(' -', c.text));
+  if (changes.length) await saveHistory(changes);
 
   if (changes.length) {
     webpush.setVapidDetails('https://oriaha.github.io/footvolly_league/', vapid.publicKey, vapid.privateKey);
